@@ -1,5 +1,5 @@
-#ifndef BLOCKDEVICE_HPP
-#define BLOCKDEVICE_HPP
+#ifndef BLOCK_DEVICE_HPP
+#define BLOCK_DEVICE_HPP
 
 #include <cstdint>
 #include <string>
