@@ -1,4 +1,4 @@
-#include "BlockDevice.hpp"
+#include "../include/BlockDevice.hpp"
 
 /*********** 抽象基类BlockDevice实现 ***********/
 
@@ -40,8 +40,8 @@ bool BlockDevice::write_block(uint32_t block_id, const char *buffer)
 /*********** 派生类FileBackedBlockDevice实现 ***********/
 
 FileBackedBlockDevice::FileBackedBlockDevice(const std::string &filename, size_t block_size, size_t total_blocks) :
-    filename_(filename),    
-    BlockDevice(block_size, total_blocks)
+    BlockDevice(block_size, total_blocks),    
+    filename_(filename)
 {
     std::ifstream fin(filename.c_str(), std::ios_base::binary | std::ios_base::ate);
     if (!fin.good())
