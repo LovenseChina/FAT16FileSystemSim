@@ -1,17 +1,10 @@
-#ifndef FAT16_HPP
-#define FAT16_HPP
-
-#include <cstdint>
-#include <string>
-#include <vector>
-#include <memory>
-
-class BlockDevice;  // 其他文件中实现的块设备
+#ifndef FAT16_DISK_GENERATOR_HPP
+#define FAT16_DISK_GENERATOR_HPP
 
 /**
  * @brief 
  * 
- * FAT16（小端序）核心功能模拟程序
+ * FAT16 虚拟磁盘生成器
  * inspired by YatSunOS v2 Tutorial
  * 
  * @details
@@ -20,22 +13,26 @@ class BlockDevice;  // 其他文件中实现的块设备
  * - 每簇8扇区
  * - 一个分区就是一个卷（不支持多卷管理）
  * - 虚拟磁盘约32MB大小，含文件系统数据结构在内共65520个扇区
- * - 分离磁盘创建/格式化功能到专用生成器小程序以改善代码可读性与耦合度
  * 
  * @cite https://ysos.gzti.me/
  * @author Tang Jung-Chi
  */
 
-class FAT16
+#include <cstdint>
+#include <vector>
+#include <string>
+#include <fstream>
+
+class FAT16DiskGenerator
 {
 public:
-/********** FAT_ENTRY取值范围以及FAT[0]和FAT[1]常量 **********/
+/********** FAT_ENTRY 取值范围以及FAT[0]和FAT[1]常量 **********/
     static constexpr int16_t MIN = 2;
     static constexpr int16_t MAX = 8191;
     static constexpr int16_t FAT_0 = 0xFFF0;
     static constexpr int16_t FAT_1 = 0xFFFF;    // 表示正常卸载的FAT16磁盘
 
-/********** BPB填充用常量 **********/
+/********** BPB 填充用常量 **********/
 
     static constexpr int16_t BPB_BYTS_PER_SEC = 512;
     static constexpr int8_t BPB_SEC_PER_CLUS = 8;
@@ -50,105 +47,49 @@ public:
     static constexpr int32_t BPB_HIDD_SEC = 0;  //  0x13中断，单分区下无用，取0即可
     static constexpr int32_t BPB_TOT_SEC_32 = 65617;    //  1 + 32 + 32 + 32 + 65520
 
-/********** BS_END填充用常量 **********/
+/********** BS_END 填充用常量 **********/
 
     static constexpr int8_t BS_DRV_NUM = 0; //  0x13中断，无关字段取0即可
     static constexpr int8_t BS_RESERVED_1 = 0;
     static constexpr int8_t BS_BOOT_SIG = 0x29;    //  检验启动扇区的完整性的签名，提供了 BS_VolID、BS_VolLab 等扩展字段，则 BS_BootSig 必须为 0x29
     static constexpr int32_t BS_VOl_ID = 0; //  卷的序列号，可忽略
 
-/********** DBR签名填充用常量 **********/
+/********** DBR 签名填充用常量 **********/
     static constexpr int16_t SIGNATURE_WORD = 0xAA55;
 
-    /**
-     * @brief 构造函数，打开或创建块设备
-     * @param disk_img 磁盘镜像文件路径
-     */
-     explicit FAT16(const std::string & disk_img = "FAT16.disk");
-
-     /**
-      * @brief 析构函数，文件系统关闭时会尝试将缓冲数据持久化保存到虚拟磁盘镜像中
-      */
-    ~FAT16();
+/********** 公有成员函数 **********/
 
     /**
-     * @brief 格式化一个磁盘镜像文件
+     * @brief Construct a new FAT16DiskGenerator object
      * 
-     * 尝试清空磁盘镜像文件内所有数据
-     * 
-     * @return true 成功
-     * @return false 失败
+     * @param disk_name 欲创建FAT16虚拟磁盘文件名
      */
-    bool format();
+    FAT16DiskGenerator(const std::string & disk_name = "FAT16.img");
+    FAT16DiskGenerator(const FAT16DiskGenerator &) = delete;
+    FAT16DiskGenerator & operator=(const FAT16DiskGenerator &) = delete;
+    
+    /**
+     * @brief Destroy the FAT16DiskGenerator object
+     * 
+     * - 进行一些扫尾工作，如关闭文件流等
+     */
+    ~FAT16DiskGenerator();
 
     /**
-     * @brief 列出当前目录下所有文件
+     * @brief 生成FAT16的数据结构的数据内容
      */
-    void ls() const;
+    void gen_ds_data();
 
     /**
-     * @brief 创建空文件
+     * @brief 将FAT16的数据结构写入虚拟磁盘文件
      * 
-     * @param file_name 文件名
-     * @return true 成功
-     * @return false 失败（同名文件或FCB不足）
+     * @return true 成功写入FAT16数据结构到文件 
+     * @return false 未成功写入文件
      */
-    bool touch(const std::string & file_name);
-
-    /**
-     * @brief 向文件写入内容（覆盖模式）
-     * 
-     * @param file_name 文件名
-     * @param content 内容
-     * @return true 成功
-     * @return false 失败（文件不存在或虚拟磁盘容量不足等）
-     */
-    bool write_file(const std::string & file_name, const std::string & content);
-
-    /**
-     * @brief 显示文件内容
-     * 
-     * @param file_name 文件名
-     * @return true 成功
-     * @return false 失败（文件不存在等）
-     */
-    bool cat(const std::string & file_name) const;
-
-    /**
-     * @brief 删除单个文件
-     * 
-     * @param file_name 文件名 
-     * @return true 成功
-     * @return false 失败（文件不存在等）
-     */
-    bool rm(const std::string & file_name);
-
-    /**
-     * @brief 进入指定文件夹
-     * 
-     * @param dir_path 目录路径 
-     * @return true 成功
-     * @return false 失败（路径不存在）
-     */
-    bool cd(const std::string & dir_path);
-
-    /**
-     * @brief 检查文件是否存在
-     * 
-     * @param file_name 文件名
-     * @return true 文件存在
-     * @return false 文件不存在
-     */
-    bool exist(const std::string &file_name) const;
-
-    /**
-     * @brief 手动同步数据到虚拟磁盘
-     * 
-     */
-    void sync();
+    bool put();
 
 private:
-/********** FAT16必要数据结构 **********/
+/********** FAT16保留扇区数据结构 **********/
 
     #pragma pack(push, 1)
     /**
@@ -193,6 +134,8 @@ private:
     };
     #pragma pack(pop)
 
+/********** FAT16 FAT表项定义和目录项定义 **********/
+
     /**
      * @brief FAT表项
      * 
@@ -208,8 +151,6 @@ private:
      * 
      * - 扇区大小512B则FAT16的FAT表一个扇区有256个表项
      * - 这里每个完整的FAT表恰好占用(8190 + 2) / 256 = 32个扇区
-     * - 用指针指向FAT表，采用堆分配
-     * - 作为私有成员变量
      */
     std::vector<FAT16_ENTRY> fat_table;
 
@@ -242,63 +183,12 @@ private:
      * @brief 根目录表
      * - 共512个FCB，大小为 16348B
      * - 占用32个扇区
-     * - 思路类似FAT表的私有动态成员
      */
     std::vector<DIR_ENTRY> root_entry_table;
-
-/********** FAT16低级操作 **********/
-
-    /**
-     * @brief 按簇号读出一个簇
-     * 
-     * @param fat_entry FAT表项
-     * @param dest_buffer 目的数据缓冲，大小至少为8 * 512B（一般取8 * 512B） 
-     * @return true 成功
-     * @return false 失败
-     */
-    bool read_cluster(FAT16_ENTRY & fat_entry, int8_t * dest_buffer) const;
-
-    /**
-     * @brief 按簇号写入一个簇
-     * 
-     * @param fat_entry FAT表项
-     * @param src_buffer 源数据缓冲，大小至少为8 * 512B（一般取8 * 512B）
-     * @return true 成功
-     * @return false 失败
-     */
-    bool write_cluster(FAT16_ENTRY & fat_entry, const int8_t * src_buffer);
-
-    /**
-     * @brief 读取FAT表项
-     * 
-     * @param fat_entry 当前FAT表项
-     * @return const FAT16_ENTRY 下一个FAT表项
-     */
-    const FAT16_ENTRY get_next_entry(const FAT16_ENTRY & fat_entry) const;
-
-    /**
-     * @brief 获取一个空簇
-     * 
-     * @return const FAT16_ENTRY 空簇的簇号（FAT表项）
-     */
-    const FAT16_ENTRY get_empty_cluster() const;
-
-    /**
-     * @brief 检查是否为格式化的FAT16虚拟磁盘
-     * 
-     * @param first_sector 第一个扇区
-     * @return true 已格式化
-     * @return false 未格式化
-     */
-    bool formated(const int8_t * first_sector);
-
-/********** FAT16文件系统其他数据成员 **********/
-    std::unique_ptr<BlockDevice> device;
-    bool is_formated;
-    /**
-     * @brief 当前文件夹的目录项
-     */
-    std::vector<DIR_ENTRY> pwd;
+/********** 其它必要私有成员变量 **********/
+    std::string disk_name;  //  AT16虚拟磁盘文件名
+    std::ofstream disk_out; //  避免重复创建 std::ofstream 对象
+    DBR first_sector;
 };
 
 #endif
