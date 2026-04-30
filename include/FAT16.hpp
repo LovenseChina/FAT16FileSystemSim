@@ -28,16 +28,36 @@ class BlockDevice;  // 其他文件中实现的块设备
 class FAT16
 {
 public:
-    static constexpr size_t BLOCK_SIZE = 512;
-    static constexpr size_t TOTAL_BLOCKS = 65617;   //1 + 32 + 32 + 32 + 65520
-    static constexpr size_t RSVD_BLOCKS = 1;
-    static constexpr size_t ROOT_ENT_NUMBER = 512;
-    static constexpr size_t BLOCK_PER_CLUSTER = 8;
-    static constexpr uint16_t MIN = 2;
-    static constexpr uint16_t MAX = 8191;
-    static constexpr uint16_t EMPTY = 0;
-    static constexpr uint16_t LAST_CLUSTER = 0xFFFF;
-    static constexpr size_t FAT16_ENTRY_NUMBER = 8192;
+/********** FAT_ENTRY取值范围以及FAT[0]和FAT[1]常量 **********/
+    static constexpr int16_t MIN = 2;
+    static constexpr int16_t MAX = 8191;
+    static constexpr int16_t FAT_0 = 0xFFF0;
+    static constexpr int16_t FAT_1 = 0xFFFF;    // 表示正常卸载的FAT16磁盘
+
+/********** BPB填充用常量 **********/
+
+    static constexpr int16_t BPB_BYTS_PER_SEC = 512;
+    static constexpr int8_t BPB_SEC_PER_CLUS = 8;
+    static constexpr int16_t BPB_RSVD_SEC_CNT = 1;
+    static constexpr int8_t BPB_NUM_FATS = 2;
+    static constexpr int16_t BPB_ROOT_ENT_CNT = 512;
+    static constexpr int16_t BPB_TOT_SEC_16 = 0;
+    static constexpr int8_t BPB_MEDIA = 0xF0;   //  可移动磁盘
+    static constexpr int16_t BPB_FAT_SZ_16 = 32;
+    static constexpr int16_t BPB_SEC_PER_TRK = 0;   //  0x13中断，无关字段取0即可
+    static constexpr int16_t BPB_NUM_HEADS = 0; //  0x13中断，无关字段取0即可
+    static constexpr int32_t BPB_HIDD_SEC = 0;  //  0x13中断，单分区下无用，取0即可
+    static constexpr int32_t BPB_TOT_SEC_32 = 65617;    //  1 + 32 + 32 + 32 + 65520
+
+/********** BS_END填充用常量 **********/
+
+    static constexpr int8_t BS_DRV_NUM = 0; //  0x13中断，无关字段取0即可
+    static constexpr int8_t BS_RESERVED_1 = 0;
+    static constexpr int8_t BS_BOOT_SIG = 0x29;    //  检验启动扇区的完整性的签名，提供了 BS_VolID、BS_VolLab 等扩展字段，则 BS_BootSig 必须为 0x29
+    static constexpr int32_t BS_VOl_ID = 0; //  卷的序列号，可忽略
+
+/********** DBR签名填充用常量 **********/
+    static constexpr int16_t SIGNATURE_WORD = 0xAA55;
 
     /**
      * @brief 构造函数，打开或创建块设备
@@ -129,35 +149,48 @@ public:
 private:
 /********** FAT16必要数据结构 **********/
 
+    #pragma pack(push, 1)
     /**
      * @brief 在 FAT 格式的卷的首扇区
      * 
-     * - 分离出标准BPB和拓展BPB使代码更清晰
+     * - 包含jmp指令和OEM信息以及BPB和拓展BPB（BS）
      */
     struct BPB
     {
-        /**
-         * @brief 
-         * 
-         * 标准BPB的36B数据
-         */
-        uint8_t StandardBPBData[36];
-
-        /**
-         * @brief 
-         * 
-         * 拓展BPB数据，512 - 36 = 476B
-         * 
-         */
-        uint8_t ExtendBPBdata[476];
-
-        /**
-         * @brief 构造函数，创建BPB结构
-         * 
-         * 用于硬编码初始化BPB数据
-         */
-        BPB();
+        int16_t BPB_BytsPerSec; //  每个扇区的字节数    2B
+        int8_t BPB_SecPerClus;  //  每个簇的扇区数量    1B
+        int16_t BPB_RsvdSecCnt; //  保留区域的扇区数量  2B  comment:保留扇区在FAT16中就是DBR所在扇区
+        int8_t BPB_NumFATs; //  FAT表数量   1B
+        int16_t BPB_RootEntCnt; //  根目录中的条目数    2B
+        int16_t BPB_TotSec16;   //  16位长度卷的总扇区数    2B
+        int8_t BPB_Media;   //  设备的类型  1B
+        int16_t BPB_FATSz16;    //  单个FAT表占用的扇区数   2B
+        int16_t BPB_SecPerTrk;  //  每个扇区的磁道数    2B
+        int16_t BPB_NumHeads;   //  磁头数量    2B
+        int32_t BPB_HiddSec;    //  分区前隐藏的扇区数  4B
+        int32_t BPB_TotSec32;   //  32位长度卷的总扇区数    4B
     };
+
+    struct BS_END
+    {
+        int8_t BS_DrvNum;   //  驱动器号    1B
+        int8_t BS_Reserved1;    //  保留位  1B
+        int8_t BS_BootSig;  //  检验启动扇区的完整性的签名  1B
+        int32_t BS_VolID;   //  卷的序列号  4B
+        int8_t BS_VolLab[11];   //  卷标    11B
+        int8_t BS_FilSysType[8];  //  描述文件系统类型    8B
+    };
+    
+    struct DBR
+    {
+        int8_t BS_jmpBoot[3];   //  跳转到启动代码处执行的指令  3B
+        int8_t BS_OEMName[8]; //  OEM厂商的名称 8B
+        BPB _BPB_;
+        BS_END _BS_END_;
+        int8_t DBR_Zero[448];   //  空余，置零  448B
+        int16_t Signature_word; //  校验位  2B
+    };
+    #pragma pack(pop)
 
     /**
      * @brief FAT表项
@@ -167,7 +200,7 @@ private:
      * - 0表示空闲，1保留不用
      * - 最后一簇为0xFFFF
      */
-    typedef uint16_t FAT16_ENTRY;
+    typedef int16_t FAT16_ENTRY;
 
     /**
      * @brief FAT表
@@ -179,6 +212,7 @@ private:
      */
     std::vector<FAT16_ENTRY> fat_table;
 
+    #pragma pack(push, 1)
     /**
      * @brief 目录项（FCB）
      * 
@@ -188,13 +222,20 @@ private:
         /**
          * @brief 目录项实体数据，即目录项大小为32B
          */
-        int8_t FCBData[32];
-
-        /**
-         * @brief 目录项构造函数
-         */
-        DIR_ENTRY();
+        int8_t DIR_Name[11];    // 	短名称格式的文件名  11B
+        int8_t DIR_Attr;    //  文件的属性标记  1B
+        int8_t DIR_NTRes;   //  保留位，必须为0 1B
+        int8_t DIR_CrtTimeTenth;    //  文件创建时间，单位为10ms    1B
+        int16_t DIR_CrtTime;    //  文件创建时间    2B
+        int16_t DIR_CrtDate;    //  文件创建日期    2B
+        int16_t DIR_LstAccDate; //  文件最近访问日期    2B
+        int16_t DIR_FstClusHI;  //  首簇簇号高16位  2B
+        int16_t DIR_WrtTime;    //  文件修改时间    2B
+        int16_t DIR_WrtDate;    //  文件修改日期    2B
+        int16_t DIR_FstClusLO;  //  首簇簇号低16位  2B
+        int32_t DIR_FileSize;   //  文件的大小，单位为字节  4B
     };
+    #pragma pack(pop)
 
     /**
      * @brief 根目录表
@@ -253,7 +294,10 @@ private:
 /********** FAT16文件系统其他数据成员 **********/
     std::unique_ptr<BlockDevice> device;
     bool is_formated;
-    std::unique_ptr<int8_t> pwd;
+    /**
+     * @brief 当前文件夹的目录项
+     */
+    std::vector<DIR_ENTRY> pwd;
 };
 
 #endif
