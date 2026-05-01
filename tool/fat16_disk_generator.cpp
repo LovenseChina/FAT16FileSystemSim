@@ -302,5 +302,6 @@ int main(int argc, const char * argv[])
     FAT16DiskGenerator disk_instance(argv[1]);
     disk_instance.gen_ds_data();
     disk_instance.put();
+    std::cout << "\"" << argv[1] << "\" FAT16 image generated.\n";
     return 0;
 }
