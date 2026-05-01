@@ -284,8 +284,10 @@ bool FAT16DiskGenerator::put()
      */
     char empty_sector[BPB_BYTS_PER_SEC] = { 0 };
     for (int16_t i = MIN; i <= MAX; ++i)
-    {
-        this->disk_out.write(empty_sector, BPB_BYTS_PER_SEC * BPB_SEC_PER_CLUS);
+    {   
+        for (int16_t j = 0; j < static_cast<uint8_t>(BPB_SEC_PER_CLUS); ++j) {
+            this->disk_out.write(empty_sector, BPB_BYTS_PER_SEC);
+        }
     }
     return true;
 }
