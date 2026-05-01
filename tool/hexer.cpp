@@ -144,6 +144,6 @@ int main(int argc, const char *argv[])
     }
     fin.close();
     fout.close();
-    std::cout << "\nReadable hex file \"" << out_file_name << "\" created successfully.\n";
+    std::cout << "Readable hex file \"" << out_file_name << "\" created successfully.\n";
     return 0;
 }
