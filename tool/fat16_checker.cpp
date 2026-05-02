@@ -7,7 +7,7 @@
 
 /**
  * @brief 分离自 FAT16.cpp 中 FAT16 构造函数中的 FAT16 镜像的验证代码
- * 
+ *
  * @cite https://ysos.gzti.me/
  * @author Tang Jung-Chi
  */
@@ -55,16 +55,36 @@ struct DBR
 };
 #pragma pack(pop)
 
-int main(int argc, char * argv[])
+uint32_t get_total_clusters(const DBR & DBR_512);
+
+int main(int argc, char *argv[])
 {
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        std::cerr << "USAGE: " << argv[0] << " <FAT16_disk_img_name>\n";
-        exit(EXIT_FAILURE); 
+        std::cerr << "USAGE 1: " << argv[0] << " <FAT16_disk_img_name>\n"
+                  << "USAGE 2: " << argv[0] << " -d <FAT16_disk_img_name>";
+        exit(EXIT_FAILURE);
     }
-    std::string disk_img = argv[1];
+    if (argc == 3)
+    {
+        std::string param = argv[1];
+        if (param != "-d")
+        {
+            std::cerr << "Invalid parameter.\n";
+            exit(EXIT_FAILURE);
+        }
+    }
+    std::string disk_img;
+    if (argc == 2)
+    {
+        disk_img = argv[1];
+    }
+    else
+    {
+        disk_img = argv[2];
+    }
     DBR DBR_512;
-        //  读取DBR
+    //  读取DBR
     std::ifstream disk_in(disk_img, std::ios_base::binary);
     if (!disk_in.is_open())
     {
@@ -72,7 +92,7 @@ int main(int argc, char * argv[])
                   << "\"\nAobrt.\n";
         exit(EXIT_FAILURE);
     }
-    disk_in.read(reinterpret_cast<char *>(&DBR_512), 512);    //  如果 BPB_BytsPerSec > 512 则存在此域，全部置零，故只需读入起始512字节
+    disk_in.read(reinterpret_cast<char *>(&DBR_512), 512); //  如果 BPB_BytsPerSec > 512 则存在此域，全部置零，故只需读入起始512字节
 
     // 检验每个扇区的字节数的合法性
     uint16_t BPS = DBR_512._BPB_.BPB_BytsPerSec;
@@ -80,7 +100,7 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_BytsPerSec = "
-                  << BPS <<"\nAbort.\n";
+                  << BPS << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -89,7 +109,7 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_RsvdSecCnt = "
-                  << DBR_512._BPB_.BPB_RsvdSecCnt <<"\nAbort.\n";
+                  << DBR_512._BPB_.BPB_RsvdSecCnt << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -98,7 +118,7 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_RootEntCnt = "
-                  << DBR_512._BPB_.BPB_RootEntCnt <<"\nAbort.\n";
+                  << DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -121,7 +141,7 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_FATSz16 = "
-                  << DBR_512._BPB_.BPB_FATSz16 <<"\nAbort.\n";
+                  << DBR_512._BPB_.BPB_FATSz16 << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -130,7 +150,7 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_DrvNum = "
-                  << DBR_512._BS_END_.BS_DrvNum <<"\nAbort.\n";
+                  << DBR_512._BS_END_.BS_DrvNum << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -139,20 +159,30 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_Reserved1 = "
-                  << DBR_512._BS_END_.BS_Reserved1 <<"\nAbort.\n";
+                  << DBR_512._BS_END_.BS_Reserved1 << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
-    // 暂时不提供 BS_VolID、BS_VolLab 和 BS_FilSysType 的解析，故 BS_BootSig 不检验	
-    
-    // 检验空余（小于512字节）
-    for (int i = 0; i < 448; ++i)
+    // 检验启动扇区的完整性的签名（松散检测）
+    if (DBR_512._BS_END_.BS_BootSig != 0x28 && DBR_512._BS_END_.BS_BootSig != 0x29)
     {
-        if (DBR_512.DBR_Zero[i] != 0)
+        std::cerr << "Invalid disk image \"" << disk_img
+                  << "\": BS_BootSig = "
+                  << DBR_512._BS_END_.BS_BootSig << "\nAbort.\n";
+        exit(EXIT_FAILURE);
+    }
+
+    // 检验空余（小于512字节）
+    if (argc == 2)
+    {
+        for (int i = 0; i < 448; ++i)
         {
-            std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": Dirty DBR " <<"\nAbort.\n";
-            exit(EXIT_FAILURE);
+            if (DBR_512.DBR_Zero[i] != 0)
+            {
+                std::cerr << "Invalid disk image \"" << disk_img
+                          << "\": Dirty DBR " << "\nAbort.\n";
+                exit(EXIT_FAILURE);
+            }
         }
     }
 
@@ -161,23 +191,26 @@ int main(int argc, char * argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": Signature_word = "
-                  << DBR_512.Signature_word <<"\nAbort.\n";
+                  << DBR_512.Signature_word << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
     // 检验空余（大于512字节）
-    if (DBR_512._BPB_.BPB_BytsPerSec > 512)
+    if (argc == 2)
     {
-        int16_t rest_zero_bytes = DBR_512._BPB_.BPB_BytsPerSec - 512;
-        std::vector<uint8_t> datas(rest_zero_bytes);
-        disk_in.read(reinterpret_cast<char *>(datas.data()), rest_zero_bytes);
-        for (int16_t i = 0; i < rest_zero_bytes; ++i)
+        if (DBR_512._BPB_.BPB_BytsPerSec > 512)
         {
-            if (datas[i] != 0)
+            int16_t rest_zero_bytes = DBR_512._BPB_.BPB_BytsPerSec - 512;
+            std::vector<uint8_t> datas(rest_zero_bytes);
+            disk_in.read(reinterpret_cast<char *>(datas.data()), rest_zero_bytes);
+            for (int16_t i = 0; i < rest_zero_bytes; ++i)
             {
-                std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": Dirty DBR " <<"\nAbort.\n";
-                exit(EXIT_FAILURE);
+                if (datas[i] != 0)
+                {
+                    std::cerr << "Invalid disk image \"" << disk_img
+                              << "\": Dirty DBR " << "\nAbort.\n";
+                    exit(EXIT_FAILURE);
+                }
             }
         }
     }
@@ -196,7 +229,35 @@ int main(int argc, char * argv[])
         exit(EXIT_FAILURE);
     }
 
+    // 检测簇数是否为 FAT16 规定合法值
+    uint32_t total_clus = get_total_clusters(DBR_512);
+    if (!(total_clus >= 4085 && total_clus < 65525))
+    {
+        std::cerr << "\"" << disk_img
+                  << "\"may be FAT12 or FAT32 image, total clusters = "
+                  << total_clus << "\nAbort.\n";
+        exit(EXIT_FAILURE);
+    }
+
     disk_in.close();
     std::cout << "FAT16 disk image is valid.\n";
     return 0;
+}
+
+uint32_t get_total_clusters(const DBR & DBR_512)
+{   
+    //  获取总扇区数
+    uint32_t total_sectors = DBR_512._BPB_.BPB_TotSec16 > 0 ?
+        DBR_512._BPB_.BPB_TotSec16 :
+        DBR_512._BPB_.BPB_TotSec32;
+    //  计算根目录所占扇区
+    uint32_t total_root_ent_sectors = DBR_512._BPB_.BPB_RootEntCnt * 32 /
+        DBR_512._BPB_.BPB_BytsPerSec;
+    // 计算总数据/子目录扇区数
+    uint32_t total_data_sectors = total_sectors -
+        DBR_512._BPB_.BPB_RsvdSecCnt -
+        DBR_512._BPB_.BPB_FATSz16 * DBR_512._BPB_.BPB_NumFATs -
+        total_root_ent_sectors;
+    //  计算返回总簇数
+    return total_data_sectors / DBR_512._BPB_.BPB_SecPerClus;
 }

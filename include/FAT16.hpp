@@ -201,9 +201,9 @@ private:
     /**
      * @brief 依据DBR计算 FAT16 的总簇数
      * 
-     * - 注意：必须在 FAT16::DBR_512 已经初始化后执行
+     * - 注意：必须在 FAT16::DBR_512 已经初始化后（即从镜像读入DBR后）执行
      * 
-     * @return uint32_t 
+     * @return uint32_t 总簇数
      */
     uint32_t get_total_clusters() const;
 

@@ -82,7 +82,14 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
         exit(EXIT_FAILURE);
     }
 
-    // 暂时不提供 BS_VolID、BS_VolLab 和 BS_FilSysType 的解析，故 BS_BootSig 不检验	
+    // 检验启动扇区的完整性的签名（松散检测）
+    if (DBR_512._BS_END_.BS_BootSig != 0x28 && DBR_512._BS_END_.BS_BootSig != 0x29)
+    {
+        std::cerr << "Invalid disk image \"" << disk_img
+                  << "\": BS_BootSig = "
+                  << DBR_512._BS_END_.BS_BootSig << "\nAbort.\n";
+        exit(EXIT_FAILURE);
+    }
     
     // 检验空余（小于512字节）
     for (int i = 0; i < 448; ++i)
@@ -139,7 +146,17 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
                   << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
-    
+
+    // 检测簇数是否为 FAT16 规定合法值
+    uint32_t total_clus = this->get_total_clusters();
+    if (!(total_clus >= 4085 && total_clus < 65525))
+    {
+        std::cerr << "\"" << disk_img
+                  << "\"may be FAT12 or FAT32 image, total clusters = "
+                  << total_clus << "\nAbort.\n";
+        exit(EXIT_FAILURE);
+    }
+
     std::cout << "Disk meta data all check clear.\n"
               << "FAT table constructed.\n";
 
@@ -153,7 +170,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     //  关闭文件流
     disk_in.close();
 
-    //  初始路径为根目录 /
+    //  初始当前路径为根目录 /
     this->pwd = "/";
 
     //  依据DBR数据构造块设备
