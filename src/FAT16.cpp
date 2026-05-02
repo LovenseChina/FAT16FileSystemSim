@@ -1,7 +1,8 @@
 #include "../include/FAT16.hpp"
 #include "../include/BlockDevice.hpp"
+#include <iomanip>
 
-FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
+FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
 {
     //  读取DBR
     std::ifstream disk_in(disk_img, std::ios_base::binary);
@@ -11,7 +12,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
                   << "\"\nAobrt.\n";
         exit(EXIT_FAILURE);
     }
-    disk_in.read(reinterpret_cast<char *>(&this->DBR_512), 512);    //  如果 BPB_BytsPerSec > 512 则存在此域，全部置零，故只需读入起始512字节
+    disk_in.read(reinterpret_cast<char *>(&this->DBR_512), 512); //  如果 BPB_BytsPerSec > 512 则存在此域，全部置零，故只需读入起始512字节
 
     // 检验每个扇区的字节数的合法性
     uint16_t BPS = this->DBR_512._BPB_.BPB_BytsPerSec;
@@ -19,7 +20,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_BytsPerSec = "
-                  << BPS <<"\nAbort.\n";
+                  << BPS << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -28,7 +29,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_RsvdSecCnt = "
-                  << this->DBR_512._BPB_.BPB_RsvdSecCnt <<"\nAbort.\n";
+                  << this->DBR_512._BPB_.BPB_RsvdSecCnt << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -37,7 +38,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_RootEntCnt = "
-                  << this->DBR_512._BPB_.BPB_RootEntCnt <<"\nAbort.\n";
+                  << this->DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -60,7 +61,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BPB_FATSz16 = "
-                  << this->DBR_512._BPB_.BPB_FATSz16 <<"\nAbort.\n";
+                  << this->DBR_512._BPB_.BPB_FATSz16 << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -69,7 +70,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_DrvNum = "
-                  << this->DBR_512._BS_END_.BS_DrvNum <<"\nAbort.\n";
+                  << this->DBR_512._BS_END_.BS_DrvNum << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -78,7 +79,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_Reserved1 = "
-                  << this->DBR_512._BS_END_.BS_Reserved1 <<"\nAbort.\n";
+                  << this->DBR_512._BS_END_.BS_Reserved1 << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -90,14 +91,14 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
                   << DBR_512._BS_END_.BS_BootSig << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
-    
+
     // 检验空余（小于512字节）
     for (int i = 0; i < 448; ++i)
     {
         if (this->DBR_512.DBR_Zero[i] != 0)
         {
             std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": Dirty DBR " <<"\nAbort.\n";
+                      << "\": Dirty DBR " << "\nAbort.\n";
             exit(EXIT_FAILURE);
         }
     }
@@ -107,7 +108,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": Signature_word = "
-                  << this->DBR_512.Signature_word <<"\nAbort.\n";
+                  << this->DBR_512.Signature_word << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -122,7 +123,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
             if (datas[i] != 0)
             {
                 std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": Dirty DBR " <<"\nAbort.\n";
+                          << "\": Dirty DBR " << "\nAbort.\n";
                 exit(EXIT_FAILURE);
             }
         }
@@ -132,7 +133,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     uint32_t fat16_table_bytes = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec);
     this->fat_table.resize(fat16_table_bytes / sizeof(FAT16_ENTRY));
     disk_in.read(reinterpret_cast<char *>(this->fat_table.data()), fat16_table_bytes);
-    disk_in.seekg(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec), std::ios::cur);   //  忽略冗余FAT
+    disk_in.seekg(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec), std::ios::cur); //  忽略冗余FAT
 
     //  FAT[0]检验
     int16_t sign_ext_media = static_cast<int8_t>(this->DBR_512._BPB_.BPB_Media);
@@ -157,15 +158,49 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
         exit(EXIT_FAILURE);
     }
 
-    std::cout << "Disk meta data all check clear.\n"
-              << "FAT table constructed.\n";
-
     //  构造根目录表
     uint32_t root_table_bytes = 32 * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_RootEntCnt);
     this->root_entry_table.resize(this->DBR_512._BPB_.BPB_RootEntCnt);
     disk_in.read(reinterpret_cast<char *>(this->root_entry_table.data()), root_table_bytes);
 
-    std::cout << "Root directory constructed.\n";
+    //  检测根目录中卷标文件与 DBR 中卷标的一致性（严格检测）
+    if (this->DBR_512._BS_END_.BS_BootSig == 0x29)
+    {
+        std::vector<DIR_ENTRY>::iterator VolLab_it;
+        for (VolLab_it = this->root_entry_table.begin(); VolLab_it != this->root_entry_table.end(); ++VolLab_it)
+        {
+            if (VolLab_it->DIR_Attr == 0x08)
+            {
+                break;
+            }
+        }
+        if (VolLab_it == this->root_entry_table.end())
+        {
+            std::cerr << "Invalid disk image \"" << disk_img
+                      << "\": Without volume label file in the root directory"
+                      << "\nAbort.\n";
+            exit(EXIT_FAILURE);
+        }
+        for (int i = 0; i < 11; ++i)
+        {
+            if (this->DBR_512._BS_END_.BS_VolLab[i] != VolLab_it->DIR_Name[i])
+            {
+                std::cerr << "Invalid disk image \"" << disk_img
+                          << "\": BS_VolLab[" << i << "] = 0x"
+                          << std::setw(2) << std::setfill('0') << std::hex
+                          << static_cast<uint32_t>(this->DBR_512._BS_END_.BS_VolLab[i])
+                          << ", DIR_Name[" << i << "] = 0x"
+                          << std::setw(2) << std::setfill('0') << std::hex
+                          << VolLab_it->DIR_Name[i]
+                          << "\nAbort.\n";
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+    std::cout << "Disk meta data all check clear.\n"
+              << "FAT table constructed.\n"
+              << "Root directory constructed.\n";
 
     //  关闭文件流
     disk_in.close();
@@ -174,9 +209,7 @@ FAT16::FAT16(const std::string & disk_img) : disk_name(disk_img)
     this->pwd = "/";
 
     //  依据DBR数据构造块设备
-    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ?
-        this->DBR_512._BPB_.BPB_TotSec16 :
-        this->DBR_512._BPB_.BPB_TotSec32;
+    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ? this->DBR_512._BPB_.BPB_TotSec16 : this->DBR_512._BPB_.BPB_TotSec32;
     this->device.reset(new FileBackedBlockDevice(disk_img, this->DBR_512._BPB_.BPB_BytsPerSec, total_sectors));
 
     std::cout << "\"" << disk_img << "\" has mounted.\n";
@@ -191,19 +224,17 @@ FAT16::~FAT16()
 }
 
 uint32_t FAT16::get_total_clusters() const
-{   
+{
     //  获取总扇区数
-    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ?
-        this->DBR_512._BPB_.BPB_TotSec16 :
-        this->DBR_512._BPB_.BPB_TotSec32;
+    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ? this->DBR_512._BPB_.BPB_TotSec16 : this->DBR_512._BPB_.BPB_TotSec32;
     //  计算根目录所占扇区
     uint32_t total_root_ent_sectors = this->DBR_512._BPB_.BPB_RootEntCnt * 32 /
-        this->DBR_512._BPB_.BPB_BytsPerSec;
+                                      this->DBR_512._BPB_.BPB_BytsPerSec;
     // 计算总数据/子目录扇区数
     uint32_t total_data_sectors = total_sectors -
-        this->DBR_512._BPB_.BPB_RsvdSecCnt -
-        this->DBR_512._BPB_.BPB_FATSz16 * this->DBR_512._BPB_.BPB_NumFATs -
-        total_root_ent_sectors;
+                                  this->DBR_512._BPB_.BPB_RsvdSecCnt -
+                                  this->DBR_512._BPB_.BPB_FATSz16 * this->DBR_512._BPB_.BPB_NumFATs -
+                                  total_root_ent_sectors;
     //  计算返回总簇数
     return total_data_sectors / this->DBR_512._BPB_.BPB_SecPerClus;
 }

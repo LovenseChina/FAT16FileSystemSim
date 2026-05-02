@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <iomanip>
 
 /**
  * @brief 分离自 FAT16.cpp 中 FAT16 构造函数中的 FAT16 镜像的验证代码
@@ -53,9 +54,33 @@ struct DBR
     uint8_t DBR_Zero[448];   //  空余，置零  448B
     uint16_t Signature_word; //  校验位  2B
 };
+
+/**
+ * @brief 目录项（FCB）
+ *
+ */
+struct DIR_ENTRY
+{
+    /**
+     * @brief 目录项实体数据，即目录项大小为32B
+     */
+    uint8_t DIR_Name[11];     // 	短名称格式的文件名  11B
+    uint8_t DIR_Attr;         //  文件的属性标记  1B
+    uint8_t DIR_NTRes;        //  保留位，必须为0 1B
+    uint8_t DIR_CrtTimeTenth; //  文件创建时间，单位为10ms    1B
+    uint16_t DIR_CrtTime;     //  文件创建时间    2B
+    uint16_t DIR_CrtDate;     //  文件创建日期    2B
+    uint16_t DIR_LstAccDate;  //  文件最近访问日期    2B
+    uint16_t DIR_FstClusHI;   //  首簇簇号高16位  2B
+    uint16_t DIR_WrtTime;     //  文件修改时间    2B
+    uint16_t DIR_WrtDate;     //  文件修改日期    2B
+    uint16_t DIR_FstClusLO;   //  首簇簇号低16位  2B
+    uint32_t DIR_FileSize;    //  文件的大小，单位为字节  4B
+};
+
 #pragma pack(pop)
 
-uint32_t get_total_clusters(const DBR & DBR_512);
+uint32_t get_total_clusters(const DBR &DBR_512);
 
 int main(int argc, char *argv[])
 {
@@ -145,7 +170,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // 检验用于0x13中断的驱动器号
+    //  检验用于0x13中断的驱动器号
     if (!(DBR_512._BS_END_.BS_DrvNum == 0x80 || DBR_512._BS_END_.BS_DrvNum == 0x00))
     {
         std::cerr << "Invalid disk image \"" << disk_img
@@ -154,7 +179,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // 检验保留位
+    //  检验保留位
     if (DBR_512._BS_END_.BS_Reserved1 != 0)
     {
         std::cerr << "Invalid disk image \"" << disk_img
@@ -163,7 +188,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // 检验启动扇区的完整性的签名（松散检测）
+    //  检验启动扇区的完整性的签名（松散检测）
     if (DBR_512._BS_END_.BS_BootSig != 0x28 && DBR_512._BS_END_.BS_BootSig != 0x29)
     {
         std::cerr << "Invalid disk image \"" << disk_img
@@ -172,7 +197,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // 检验空余（小于512字节）
+    //  检验空余（小于512字节）
     if (argc == 2)
     {
         for (int i = 0; i < 448; ++i)
@@ -186,7 +211,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    // 检验校验位
+    //  检验校验位
     if (DBR_512.Signature_word != 0xAA55)
     {
         std::cerr << "Invalid disk image \"" << disk_img
@@ -195,7 +220,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // 检验空余（大于512字节）
+    //  检验空余（大于512字节）
     if (argc == 2)
     {
         if (DBR_512._BPB_.BPB_BytsPerSec > 512)
@@ -215,7 +240,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    // FAT[0]检验
+    //  FAT[0]检验
     int16_t media = static_cast<int8_t>(DBR_512._BPB_.BPB_Media), fat_0;
     disk_in.read(reinterpret_cast<char *>(&fat_0), 2);
     if (media != fat_0)
@@ -229,7 +254,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // 检测簇数是否为 FAT16 规定合法值
+    //  检测簇数是否为 FAT16 规定合法值
     uint32_t total_clus = get_total_clusters(DBR_512);
     if (!(total_clus >= 4085 && total_clus < 65525))
     {
@@ -239,25 +264,66 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    //  检测根目录中卷标文件与 DBR 中卷标的一致性（严格检测）
+    if (DBR_512._BS_END_.BS_BootSig == 0x29)
+    {
+        uint32_t root_ent_beg = (static_cast<uint32_t>(DBR_512._BPB_.BPB_RsvdSecCnt) +
+                                 static_cast<uint32_t>(DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(DBR_512._BPB_.BPB_NumFATs)) *
+                                static_cast<uint32_t>(DBR_512._BPB_.BPB_BytsPerSec); //  计算根目录的绝对起始偏移
+        disk_in.seekg(root_ent_beg, std::ios::beg);                                  //  移动到首个根目录
+        std::vector<DIR_ENTRY> root_ent_table(DBR_512._BPB_.BPB_RootEntCnt);
+        uint32_t root_ent_table_size = static_cast<uint32_t>(DBR_512._BPB_.BPB_RootEntCnt) *
+                                       static_cast<uint32_t>(sizeof(DIR_ENTRY));            //  计算根目录大小
+        disk_in.read(reinterpret_cast<char *>(root_ent_table.data()), root_ent_table_size); //  读取根目标表
+        std::vector<DIR_ENTRY>::iterator VolLab_it;
+        for (VolLab_it = root_ent_table.begin(); VolLab_it != root_ent_table.end(); ++VolLab_it)
+        {
+            if (VolLab_it->DIR_Attr == 0x08)
+            {
+                break;
+            }
+        }
+        if (VolLab_it == root_ent_table.end())
+        {
+            std::cerr << "Invalid disk image \"" << disk_img
+                      << "\": Without volume label file in the root directory"
+                      << "\nAbort.\n";
+            exit(EXIT_FAILURE);
+        }
+        for (int i = 0; i < 11; ++i)
+        {
+            if (DBR_512._BS_END_.BS_VolLab[i] != VolLab_it->DIR_Name[i])
+            {
+                std::cerr << "Invalid disk image \"" << disk_img
+                          << "\": BS_VolLab[" << i << "] = 0x"
+                          << std::setw(2) << std::setfill('0') << std::hex
+                          << static_cast<uint32_t>(DBR_512._BS_END_.BS_VolLab[i])
+                          << ", DIR_Name[" << i << "] = 0x"
+                          << std::setw(2) << std::setfill('0') << std::hex
+                          << VolLab_it->DIR_Name[i]
+                          << "\nAbort.\n";
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+
     disk_in.close();
     std::cout << "FAT16 disk image is valid.\n";
     return 0;
 }
 
-uint32_t get_total_clusters(const DBR & DBR_512)
-{   
+uint32_t get_total_clusters(const DBR &DBR_512)
+{
     //  获取总扇区数
-    uint32_t total_sectors = DBR_512._BPB_.BPB_TotSec16 > 0 ?
-        DBR_512._BPB_.BPB_TotSec16 :
-        DBR_512._BPB_.BPB_TotSec32;
+    uint32_t total_sectors = DBR_512._BPB_.BPB_TotSec16 > 0 ? DBR_512._BPB_.BPB_TotSec16 : DBR_512._BPB_.BPB_TotSec32;
     //  计算根目录所占扇区
     uint32_t total_root_ent_sectors = DBR_512._BPB_.BPB_RootEntCnt * 32 /
-        DBR_512._BPB_.BPB_BytsPerSec;
+                                      DBR_512._BPB_.BPB_BytsPerSec;
     // 计算总数据/子目录扇区数
     uint32_t total_data_sectors = total_sectors -
-        DBR_512._BPB_.BPB_RsvdSecCnt -
-        DBR_512._BPB_.BPB_FATSz16 * DBR_512._BPB_.BPB_NumFATs -
-        total_root_ent_sectors;
+                                  DBR_512._BPB_.BPB_RsvdSecCnt -
+                                  DBR_512._BPB_.BPB_FATSz16 * DBR_512._BPB_.BPB_NumFATs -
+                                  total_root_ent_sectors;
     //  计算返回总簇数
     return total_data_sectors / DBR_512._BPB_.BPB_SecPerClus;
 }
