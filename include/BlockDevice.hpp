@@ -6,12 +6,13 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <cstdlib>
+#include <iterator>
+#include <algorithm>
 
 /**
  * @brief 块设备抽象基类
- *
- * 模拟块设备（硬盘）的基本操作：读取/写入固定大小的块。
- * 支持两种实现：内存模拟（用于演示） 或 文件持久化。
+ * - 仅提供统一操作界面
  */
 class BlockDevice
 {
@@ -21,47 +22,36 @@ public:
      * @param block_size 块大小（字节）
      * @param total_blocks 总块数
      */
-    BlockDevice(size_t block_size, size_t total_blocks);
+    BlockDevice(uint32_t block_size, uint32_t total_blocks);
 
     BlockDevice(const BlockDevice &) = delete;
     BlockDevice &operator=(const BlockDevice &) = delete;
+
     virtual ~BlockDevice() = default;
 
     /**
      * @brief 读取一个块
      * @param block_id 块编号（从0开始）
-     * @param buffer 输出缓冲区，大小至少为block_size_
+     * @param buffer 输出缓冲区，大小至少为block_size
      * @return true成功，false失败（块号越界等）
      */
-    bool read_block(uint32_t block_id, char *buffer) const;
+    virtual bool read_block(uint32_t block_id, char * buffer) = 0;
 
     /**
      * @brief 写入一个块
      * @param block_id 块编号
-     * @param buffer 输入缓冲区，大小至少为block_size_
+     * @param buffer 输入缓冲区，大小至少为block_size
      * @return true成功，false失败
      */
-    bool write_block(uint32_t block_id, const char *buffer);
+    virtual bool write_block(uint32_t block_id, const char * buffer) = 0;
 
     /**
-     * @brief 获取总块数
+     * @brief 将所有脏数据强制同步到文件中
      */
-    size_t total_blocks() const { return total_blocks_; }
-
-    /**
-     * @brief 获取块大小
-     */
-    size_t block_size() const { return block_size_; }
-
-    /**
-     * @brief 持久化到文件（如果实现是文件支持的，可调用；内存实现可忽略）
-     */
-    virtual void flush_to_file() {}
-
+    virtual void flush_to_file() = 0;
 protected:
-    size_t block_size_;
-    size_t total_blocks_;
-    std::vector<char> data_; // 内存模拟磁盘
+    size_t block_size;
+    size_t total_blocks;
 };
 
 /**
@@ -79,20 +69,60 @@ public:
      * @param total_blocks 总块数（如果文件不存在则按此创建；存在则自动适配）
      */
     FileBackedBlockDevice(const std::string &filename,
-                          size_t block_size,
-                          size_t total_blocks);
-
-    ~FileBackedBlockDevice();
+                          uint32_t block_size,
+                          uint32_t total_blocks);
 
     /**
-     * @brief 将内存中的数据同步到磁盘文件
+     * @brief 析构函数
+     * 
+     * - 关键作用是调用函数将内存脏数据同步到磁盘文件
      */
-    void flush_to_file() override;
-
+    ~FileBackedBlockDevice();
+    
+    /**
+     * @brief 读取一个块
+     * 
+     * @param block_id 块号（所谓逻辑地址LBA）
+     * @param buffer 内存缓冲，大小至少为块大小
+     * @return true 读成功
+     * @return false 读失败
+     */
+    virtual bool read_block(uint32_t block_id, char * buffer);
+    
+    /**
+     * @brief 写入一个块
+     * 
+     * @param block_id 块号（所谓逻辑地址LBA）
+     * @param buffer 内存缓冲，大小至少为块大小
+     * @return true 写成功
+     * @return false 写失败
+     */
+    virtual bool write_block(uint32_t block_id, const char * buffer);
+    
+    /**
+     * @brief 将所有 脏 数据强制同步到文件中
+     */
+    virtual void flush_to_file();
 private:
-    std::string filename_;
-    void load_from_file();    // 从文件加载数据
-    void create_empty_file(); // 创建空磁盘文件
+/************ 直接映射缓存相关操作 ************/
+
+    inline uint32_t block_id_to_index(uint32_t block_id) const;
+    bool write_cache(uint32_t block_id, const char * buffer);
+    bool read_cache(uint32_t block_id, char * buffer);
+
+/************ 私有成员和静态常量 ************/
+
+    std::string filename;
+    struct CacheItem
+    {
+        bool dirty;
+        bool valid;
+        std::vector<char> data_block;
+        uint32_t block_id;
+        CacheItem();
+    };
+    static constexpr int CACHE_SIZE = 128;
+    std::vector<CacheItem> cache;
 };
 
 #endif
