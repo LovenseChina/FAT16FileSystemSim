@@ -59,7 +59,7 @@ bool FileBackedBlockDevice::write_block(uint32_t block_id, const char *buffer)
 
 void FileBackedBlockDevice::flush_to_file()
 {   
-    std::fstream fout(this->filename, std::ios_base::binary | std::ios_base::out);
+    std::fstream fout(this->filename, std::ios_base::binary | std::ios_base::out | std::ios_base::in);
     if (!fout.is_open())
     {
         std::cerr << "Virtual disk file \"" << this->filename << "\" cannot open.\nAbort.\n";
@@ -88,7 +88,7 @@ bool FileBackedBlockDevice::write_cache(uint32_t block_id, const char * buffer)
     {
         if (this->cache[index].valid && this->cache[index].dirty)
         {
-            std::fstream fout(this->filename, std::ios_base::binary | std::ios_base::out);
+            std::fstream fout(this->filename, std::ios_base::binary | std::ios_base::out | std::ios_base::in);
             if (!fout.is_open())
             {
                 return false;
@@ -113,7 +113,7 @@ bool FileBackedBlockDevice::read_cache(uint32_t block_id, char * buffer)
     {
         if (this->cache[index].valid && this->cache[index].dirty)
         {
-            std::fstream fout(this->filename, std::ios_base::binary | std::ios_base::out);
+            std::fstream fout(this->filename, std::ios_base::binary | std::ios_base::out | std::ios_base::in);
             if (!fout.is_open())
             {
                 return false;
