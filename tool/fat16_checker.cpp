@@ -80,6 +80,12 @@ struct DIR_ENTRY
 
 #pragma pack(pop)
 
+/**
+ * @brief Get the total clusters object DBR
+ * 
+ * @param DBR_512 FAT16 DBR 前512字节
+ * @return uint32_t 依据 DBR 信息推算的总簇数
+ */
 uint32_t get_total_clusters(const DBR &DBR_512);
 
 int main(int argc, char *argv[])
@@ -138,14 +144,14 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    //  检验根目录中的条目数
-    if (32 * DBR_512._BPB_.BPB_RootEntCnt % 2 != 0)
-    {
-        std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BPB_RootEntCnt = "
-                  << DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
-        exit(EXIT_FAILURE);
-    }
+    //  检验根目录中的条目数    无用代码注释掉
+    //if (32 * DBR_512._BPB_.BPB_RootEntCnt % 2 != 0)
+    //{
+    //    std::cerr << "Invalid disk image \"" << disk_img
+    //              << "\": BPB_RootEntCnt = "
+    //              << DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
+    //    exit(EXIT_FAILURE);
+    //}
 
     //  检验16位长度卷的总扇区数和32位长度卷的总扇区数
     uint32_t TS16 = DBR_512._BPB_.BPB_TotSec16,
@@ -175,7 +181,8 @@ int main(int argc, char *argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_DrvNum = "
-                  << DBR_512._BS_END_.BS_DrvNum << "\nAbort.\n";
+                  << std::setw(2) << std::setfill('0') << std::hex
+                  << static_cast<uint32_t>(DBR_512._BS_END_.BS_DrvNum) << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -184,7 +191,7 @@ int main(int argc, char *argv[])
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_Reserved1 = "
-                  << DBR_512._BS_END_.BS_Reserved1 << "\nAbort.\n";
+                  << static_cast<uint32_t>(DBR_512._BS_END_.BS_Reserved1) << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -192,8 +199,9 @@ int main(int argc, char *argv[])
     if (DBR_512._BS_END_.BS_BootSig != 0x28 && DBR_512._BS_END_.BS_BootSig != 0x29)
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BS_BootSig = "
-                  << DBR_512._BS_END_.BS_BootSig << "\nAbort.\n";
+                  << "\": BS_BootSig = 0x"
+                  << std::setw(2) << std::setfill('0') << std::hex
+                  << static_cast<uint32_t>(DBR_512._BS_END_.BS_BootSig) << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -215,7 +223,8 @@ int main(int argc, char *argv[])
     if (DBR_512.Signature_word != 0xAA55)
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": Signature_word = "
+                  << "\": Signature_word = 0x"
+                  << std::setw(4) << std::setfill('0') << std::hex
                   << DBR_512.Signature_word << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
@@ -246,9 +255,11 @@ int main(int argc, char *argv[])
     if (media != fat_0)
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BPB_Media = "
-                  << DBR_512._BPB_.BPB_Media
-                  << ", FAT[0] "
+                  << "\": BPB_Media = 0x"
+                  << std::setw(2) << std::setfill('0') << std::hex
+                  << static_cast<uint32_t>(DBR_512._BPB_.BPB_Media)
+                  << ", FAT[0] = 0x"
+                  << std::setw(4) << std::setfill('0') << std::hex
                   << fat_0
                   << "\nAbort.\n";
         exit(EXIT_FAILURE);

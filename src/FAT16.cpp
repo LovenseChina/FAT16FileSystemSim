@@ -33,14 +33,14 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
         exit(EXIT_FAILURE);
     }
 
-    //  检验根目录中的条目数
-    if (32 * this->DBR_512._BPB_.BPB_RootEntCnt % 2 != 0)
-    {
-        std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BPB_RootEntCnt = "
-                  << this->DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
-        exit(EXIT_FAILURE);
-    }
+    //  检验根目录中的条目数    无用代码注释掉
+    //if (32 * this->DBR_512._BPB_.BPB_RootEntCnt % 2 != 0)
+    //{
+    //    std::cerr << "Invalid disk image \"" << disk_img
+    //              << "\": BPB_RootEntCnt = "
+    //              << this->DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
+    //    exit(EXIT_FAILURE);
+    //}
 
     //  检验16位长度卷的总扇区数和32位长度卷的总扇区数
     uint32_t TS16 = this->DBR_512._BPB_.BPB_TotSec16,
@@ -69,8 +69,9 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     if (!(this->DBR_512._BS_END_.BS_DrvNum == 0x80 || this->DBR_512._BS_END_.BS_DrvNum == 0x00))
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BS_DrvNum = "
-                  << this->DBR_512._BS_END_.BS_DrvNum << "\nAbort.\n";
+                  << "\": BS_DrvNum = 0x"
+                  << std::setw(2) << std::setfill('0') << std::hex
+                  << static_cast<uint32_t>(this->DBR_512._BS_END_.BS_DrvNum) << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -79,7 +80,7 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     {
         std::cerr << "Invalid disk image \"" << disk_img
                   << "\": BS_Reserved1 = "
-                  << this->DBR_512._BS_END_.BS_Reserved1 << "\nAbort.\n";
+                  << static_cast<uint32_t>(this->DBR_512._BS_END_.BS_Reserved1) << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
 
@@ -87,7 +88,8 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     if (DBR_512._BS_END_.BS_BootSig != 0x28 && DBR_512._BS_END_.BS_BootSig != 0x29)
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BS_BootSig = "
+                  << "\": BS_BootSig = 0x"
+                  << std::setw(2) << std::setfill('0') << std::hex
                   << DBR_512._BS_END_.BS_BootSig << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
@@ -107,7 +109,8 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     if (this->DBR_512.Signature_word != 0xAA55)
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": Signature_word = "
+                  << "\": Signature_word = 0x"
+                  << std::setw(4) << std::setfill('0') << std::hex
                   << this->DBR_512.Signature_word << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
@@ -140,9 +143,11 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     if (static_cast<uint16_t>(sign_ext_media) != this->fat_table[0])
     {
         std::cerr << "Invalid disk image \"" << disk_img
-                  << "\": BPB_Media = "
-                  << this->DBR_512._BPB_.BPB_Media
-                  << ", FAT[0] "
+                  << "\": BPB_Media = 0x"
+                  << std::setw(2) << std::setfill('0') << std::hex
+                  << static_cast<uint32_t>(this->DBR_512._BPB_.BPB_Media)
+                  << ", FAT[0] = 0x"
+                  << std::setw(4) << std::setfill('0') << std::hex
                   << this->fat_table[0]
                   << "\nAbort.\n";
         exit(EXIT_FAILURE);
