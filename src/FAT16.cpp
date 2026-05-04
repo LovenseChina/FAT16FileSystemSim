@@ -235,7 +235,8 @@ FAT16::~FAT16()
         this->device->flush_to_file();
     }
     this->fat_table[1] = 0xffff;
-    
+    // 还未完善，需要将 FAT16 的元数据写回镜像文件
+
     std::cout << "\"" << this->disk_name << "\" unmonted.\n";
 }
 
