@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <cstring>
+#include <iterator>
+#include <iomanip>
 
 /**
  * @brief 块设备中低级的数据块就是FAT16中的扇区
@@ -48,22 +51,22 @@ public:
     /**
      * @brief 导出文件到宿主机
      * 
-     * @param src__file_path 来自镜像的已解析源文件路径
+     * @param src_file_path 来自镜像的已解析源文件路径
      * @param dest_file_path 宿主机器的目标文件路径
      * @return true 导出成功
      * @return false 导出失败
      */
-    bool export_file(const std::string & src__file_path, const std::string & dest_file_path);
+    bool export_file(const std::string & src_file_path, const std::string & dest_file_path);
 
     /**
      * @brief 加载文件到镜像
      * 
-     * @param src__file_path 来自宿主机器的源文件路径
+     * @param src_file_path 来自宿主机器的源文件路径
      * @param dest_file_path 镜像的已解析目标文件路径
      * @return true 导入成功
      * @return false 导入失败
      */
-    bool load_file(const std::string & src__file_path, const std::string & dest_file_path);
+    bool load_file(const std::string & src_file_path, const std::string & dest_file_path);
 
     /**
      * @brief 格式化一个磁盘镜像文件
@@ -215,6 +218,28 @@ private:
         uint32_t DIR_FileSize;   //  文件的大小，单位为字节  4B
     };
     #pragma pack(pop)
+
+/********** 字符串操作 **********/
+
+/**
+ * @brief   严格8.3格式短文件名转为人类易读的严格文件名
+ * 
+ * @param dir_name 目录项的 DIR_Name 字段
+ * @param filename 人类易读的严格文件名，如 abc.txt
+ * @return true 转换成功
+ * @return false 转换失败
+ */
+bool short_file_name_to_string(const uint8_t * dir_name, std::string & filename);
+
+/**
+ * @brief 人类易读的严格文件名转为严格8.3格式短文件名
+ * 
+ * @param filename 人类易读的严格文件名，如 abc.txt
+ * @param dir_name 目录项的 DIR_Name 字段
+ * @return true 转换成功
+ * @return false 转换失败
+ */
+bool string_to_short_file_name(const std::string & filename, uint8_t * dir_name);
 
 /********** FAT16低级操作 **********/
 
