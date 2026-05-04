@@ -268,7 +268,7 @@ bool FAT16::export_file(const std::string &src_file_path, const std::string &des
     }
     if (it == this->root_entry_table.end())
     {
-        std::cerr << "\"" << src_file_path << "\" does not exsit";
+        std::cerr << "\"" << src_file_path << "\" does not exsit\n";
         return false;
     }
     else
