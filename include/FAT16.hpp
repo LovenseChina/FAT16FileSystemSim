@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iterator>
 #include <iomanip>
+#include <algorithm>
 
 /**
  * @brief 块设备中低级的数据块就是FAT16中的扇区
