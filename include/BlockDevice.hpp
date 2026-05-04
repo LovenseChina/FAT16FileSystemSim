@@ -1,6 +1,13 @@
 #ifndef BLOCK_DEVICE_HPP
 #define BLOCK_DEVICE_HPP
 
+/**
+ * @file BlockDevice.hpp
+ * @author Tang Jung-Chi
+ * @version 0.1
+ * @date 2026-05-04
+ */
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -105,14 +112,42 @@ public:
     virtual void flush_to_file();
 private:
 /************ 直接映射缓存相关操作 ************/
-
+    
+    /**
+     * @brief 将块号映射到 cache 地址
+     * 
+     * @param block_id 块号
+     * @return uint32_t cache 地址 
+     */
     inline uint32_t block_id_to_index(uint32_t block_id) const;
+
+    /**
+     * @brief 按块号将数据写入 cache 
+     * 
+     * @param block_id 块号 
+     * @param buffer 写入数据的指针，要求指向区域大小不小于block_size
+     * @return true 写入成功
+     * @return false 写入失败
+     */
     bool write_cache(uint32_t block_id, const char * buffer);
+
+    /**
+     * @brief 按块号读出 cache 内数据
+     * 
+     * @param block_id 块号
+     * @param buffer 读入数据的指针，要求指向区域大小不小于block_size
+     * @return true 读出成功
+     * @return false 读出失败
+     */
     bool read_cache(uint32_t block_id, char * buffer);
 
 /************ 私有成员和静态常量 ************/
 
     std::string filename;
+    /**
+     * @brief 按 ORG 直接映射 cache 设计的缓存单元结构体
+     * 详细内容见课本和此处代码
+     */
     struct CacheItem
     {
         bool dirty;
@@ -122,6 +157,9 @@ private:
         CacheItem();
     };
     static constexpr int CACHE_SIZE = 128;
+    /**
+     * @brief 直接映射 cache 直接组织成 std::vector 数组
+     */
     std::vector<CacheItem> cache;
 };
 
