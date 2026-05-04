@@ -425,7 +425,6 @@ bool FAT16::load_file(const std::string &src_file_path, const std::string &dest_
                 fin.read(reinterpret_cast<char *>(data_block.data()), to_read);
                 this->device->write_block(block_id + i, reinterpret_cast<char *>(data_block.data()));
                 remaining_bytes -= to_read;
-                std::cout << "Remaining " << remaining_bytes << "\n";
             }
 
             //  找到下一个空闲簇
@@ -489,7 +488,7 @@ bool FAT16::string_to_short_file_name(const std::string &filename, uint8_t *dir_
 
     memset(dir_name, ' ', 11);
 
-    int dot_pos = 0;
+    size_t dot_pos = 0;
     for (; dot_pos < filename.size(); ++dot_pos)
     {
         if (filename[dot_pos] == '.')
@@ -501,11 +500,11 @@ bool FAT16::string_to_short_file_name(const std::string &filename, uint8_t *dir_
     {
         return false;
     }
-    for (int i = 0; i < dot_pos; ++i)
+    for (size_t i = 0; i < dot_pos; ++i)
     {
         dir_name[i] = filename[i];
     }
-    for (int i = dot_pos + 1; i < filename.size(); ++i)
+    for (size_t i = dot_pos + 1; i < filename.size(); ++i)
     {
         dir_name[i - dot_pos - 1 + 8] = filename[i];
     }

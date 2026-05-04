@@ -3,6 +3,6 @@
 int main()
 {
     FAT16 test("empty.img");
-    test.load_file("TEST.BIN", "TEST.BIN");
-    test.export_file("TEST.BIN", "EXPORT.exe");
+    test.load_file("PORN.MP4", "PORN.MP4");
+    test.export_file("PORN.MP4", "EXPORT.MP4");
 }
