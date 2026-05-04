@@ -46,6 +46,26 @@ public:
     ~FAT16();
 
     /**
+     * @brief 导出文件到宿主机
+     * 
+     * @param src__file_path 来自镜像的已解析源文件路径
+     * @param dest_file_path 宿主机器的目标文件路径
+     * @return true 导出成功
+     * @return false 导出失败
+     */
+    bool export_file(const std::string & src__file_path, const std::string & dest_file_path);
+
+    /**
+     * @brief 加载文件到镜像
+     * 
+     * @param src__file_path 来自宿主机器的源文件路径
+     * @param dest_file_path 镜像的已解析目标文件路径
+     * @return true 导入成功
+     * @return false 导入失败
+     */
+    bool load_file(const std::string & src__file_path, const std::string & dest_file_path);
+
+    /**
      * @brief 格式化一个磁盘镜像文件
      * 
      * 尝试清空磁盘镜像文件内所有数据
@@ -206,6 +226,15 @@ private:
      * @return uint32_t 总簇数
      */
     uint32_t get_total_clusters() const;
+
+    /**
+     * @brief 逻辑块地址转物理地址
+     * 
+     * @param cluster_id 逻辑块地址/簇号
+     * @param block_ids 一簇的实际起始扇区（块）的地址
+     * @return true 转换成功，false 转换失败 
+     */
+    bool LBA_to_PA(uint32_t cluster_id, uint32_t & block_id) const;
 
 /********** FAT16文件系统数据成员 **********/
     std::string disk_name;

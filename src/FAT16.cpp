@@ -217,14 +217,100 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ? this->DBR_512._BPB_.BPB_TotSec16 : this->DBR_512._BPB_.BPB_TotSec32;
     this->device.reset(new FileBackedBlockDevice(disk_img, this->DBR_512._BPB_.BPB_BytsPerSec, total_sectors));
 
+    // 检测FAT[1]并置为0x0
+    if (this->fat_table[1] != 0xffff)
+    {
+        std::cout << "CAUTION: \"" << disk_img
+                  << "\" was detected as not being properly removed last time!\n";
+    }
+    this->fat_table[1] = 0;
+
     std::cout << "\"" << disk_img << "\" has mounted.\n";
 }
 
 FAT16::~FAT16()
-{
+{   
     if (this->device)
     {
         this->device->flush_to_file();
+    }
+    this->fat_table[1] = 0xffff;
+    
+    std::cout << "\"" << this->disk_name << "\" unmonted.\n";
+}
+
+bool FAT16::export_file(const std::string & src_file_path, const std::string & dest_file_path)
+{   
+    //  清空宿主机文件的数据内容为文件导出作准备
+    std::fstream fout(dest_file_path, std::ios_base::binary | std::ios_base::out);
+    if (!fout.is_open())
+    {
+        std::cerr << "\"" << dest_file_path << "\" create failed!\n";
+        return false;
+    }
+    // 目前不实现多级目录，略去解析路径，核心是实现FCB分配回收与簇分配回收功能
+    // 目前仅支持短文件名
+    std::string filename = src_file_path;
+    std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin();
+    for (; it != this->root_entry_table.end(); ++it)
+    {
+        //  依照目录项构造8.3格式文件名并改造为std::string
+        std::string dir_filename;
+        
+        std::string name(reinterpret_cast<char *>(it->DIR_Name), 8);
+        name.erase(name.find_last_not_of(' ') + 1);
+        std::string ext(reinterpret_cast<char *>(it->DIR_Name + 8), 3);
+        ext.erase(ext.find_last_not_of(' ') + 1);
+
+        dir_filename = name;
+        if (!ext.empty())
+        {
+            dir_filename += '.';
+            dir_filename += ext;
+        }
+        if (dir_filename == filename)   //  按名查找
+        {
+            break;
+        }
+    }
+    if (it == this->root_entry_table.end())
+    {
+        std::cerr << "\"" << src_file_path << "\" does not exsit";
+        return false;
+    }
+    else
+    {
+        uint16_t cluster_id = it->DIR_FstClusLO;  //    FAT16只有 DIR_FstClusLO 有用
+        uint32_t remaining_bytes = it->DIR_FileSize;  //    还剩多少字节要导出
+        uint32_t block_id;
+        std::vector<uint8_t> data_block(this->DBR_512._BPB_.BPB_BytsPerSec);
+
+        while (cluster_id != 0xFFFF && remaining_bytes > 0)   //    簇号有效且还有数据要导出
+        {
+            if (this->LBA_to_PA(cluster_id, block_id))
+            {   
+                //  读取当前簇中的所有扇区，直到数据写完
+                for (uint32_t i = 0; i < this->DBR_512._BPB_.BPB_SecPerClus && remaining_bytes > 0; ++i)
+                {
+                    this->device->read_block(block_id + i, reinterpret_cast<char *>(data_block.data()));
+                    uint32_t to_write = remaining_bytes < this->DBR_512._BPB_.BPB_BytsPerSec ?
+                         remaining_bytes : this->DBR_512._BPB_.BPB_BytsPerSec;
+                    fout.write(reinterpret_cast<char *>(data_block.data()), to_write);
+                    remaining_bytes -= to_write;
+                }
+                
+                cluster_id = this->fat_table[cluster_id];   //  沿FAT链跳到下一簇
+            }
+            else
+            {
+                std::cerr << "Invalid cluster_id = " << cluster_id << ", export failed.\n";
+                return false;
+            }
+        }
+
+        fout.close();
+        std::cout << "Export success!\n";
+        return true;
     }
 }
 
@@ -242,4 +328,22 @@ uint32_t FAT16::get_total_clusters() const
                                   total_root_ent_sectors;
     //  计算返回总簇数
     return total_data_sectors / this->DBR_512._BPB_.BPB_SecPerClus;
+}
+
+bool FAT16::LBA_to_PA(uint32_t cluster_id, uint32_t & block_id) const
+{   
+    //  簇号范围：[2, MAX] ，在FAT16下，MAX = 总簇数 + 1
+    if (cluster_id < 2 || cluster_id > this->get_total_clusters() + 1)
+    {
+        return false;
+    }
+    else
+    {
+        //  计算首簇的物理地址
+        uint32_t first_cluster_block_id = this->DBR_512._BPB_.BPB_RsvdSecCnt +
+            this->DBR_512._BPB_.BPB_NumFATs * this->DBR_512._BPB_.BPB_FATSz16 +
+            this->DBR_512._BPB_.BPB_RootEntCnt * 32 / this->DBR_512._BPB_.BPB_BytsPerSec;
+        block_id = first_cluster_block_id + (cluster_id - 2) * this->DBR_512._BPB_.BPB_SecPerClus; //  套用公式获得簇物理地址
+        return true;
+    }
 }
