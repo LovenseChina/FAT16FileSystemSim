@@ -21,7 +21,7 @@ class BlockDevice;
  * 
  * @details
  * 
- * - 自动识别不含MBR的FAT16镜像文件
+ * - 自动识别不含MBR的FAT16镜像文件（即 super floppy）
  * - 维护一个DBR并依此构造块设备文件
  * - 目前只包含 YatSunOS v2 Tutorial 描述的针对特定DBR字段的核心功能
  * 
