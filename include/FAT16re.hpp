@@ -183,7 +183,7 @@ struct PathResult
  * - 中间任何一级不存在 → 返回 false，entry 无效
  * - 最后一级不存在但之前都存在 → exists = false，但 parent_dir_cluster 正确
  * 
- * @param path 路径字符串
+ * @param path 路径字符串，路径必须为完整（不一定是绝对路径）除了根目录 "/" 以外其它路径若最后有 "/" 会被忽略，交上层语义层（Layer 4）判断
  * @param result 输出参数
  * @return true 路径解析成功（至少父目录存在）
  * @return false 路径格式错误或中间目录不存在
@@ -218,6 +218,12 @@ bool resolve_path(const std::string &path, PathResult &result);
 
     // 将8.3格式短文件名的目录项元数据转换为 std::string 对象的8.3格式短文件名
     void short_name_to_string(const uint8_t *DIR_Name, std::string &name);
+
+    // 删除多余 '/' 并强制转大写
+    std::string normalize(const std::string &path) const;
+
+    // 检查文件名的正确性，注意 tokenize 后根目录不在 names 中，若 names 为空显然返回 true
+    bool validation_names(const std::vector<std::string> &names) const;
 
 /********** FAT16文件系统数据成员 **********/
     std::string disk_name;

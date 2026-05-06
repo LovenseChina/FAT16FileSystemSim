@@ -347,35 +347,16 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_entries(FAT16_ENTRY dir_cluster)
 /********** Layer 3: 路径解析 **********/
 
 bool FAT16::resolve_path(const std::string &path, PathResult &result)
-{   
-    // 删除多余 '/'
-    std::string path_copy = path;
-    auto normalize = [](std::string &path_copy)
-    {
-        auto it = std::unique(path_copy.begin(), path_copy.end(),
-                              [](char a, char b)
-                              { return a == '/' && b == '/'; });
-        path_copy.erase(it, path_copy.end());
-    };
-    normalize(path_copy);
+{
+    std::string normalized_path = this->normalize(path);
 
-    // 强制转大写
-    std::for_each(path_copy.begin(), path_copy.end(), [](char &ch)
-                  { ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); });
-
-    // 检查文件名中非法字符
-    if (path_copy.empty() || path_copy.find_first_of(" \"*/\\:<>?|") != std::string::npos) // '.'特殊处理
-    {
-        return false;
-    }
-
-    // 预处理为绝对路径的一系列文件名 token
+    // 预处理为绝对路径的一系列文件名 token，注意若采用相对路径，来自用户的输入会于 this->pwd 组合成完整路径才可传入本函数
     std::vector<std::string> tokens;
     tokens.clear();
     size_t start = 0, end = 0;
-    while ((end = path_copy.find('/', start)) != std::string::npos)
+    while ((end = normalized_path.find('/', start)) != std::string::npos)
     {
-        tokens.push_back(path_copy.substr(start, end - start));
+        tokens.push_back(normalized_path.substr(start, end - start));
         if (tokens.back() == "..")
         {
             tokens.pop_back();
@@ -387,30 +368,20 @@ bool FAT16::resolve_path(const std::string &path, PathResult &result)
         }
         start = end + 1;
     }
-    
-    // 特殊检查 '.'，以及文件名长度，不包括最后一个文件名
-    for (std::vector<std::string>::iterator it = tokens.begin(); it != tokens.end() - 1; ++it)
-    {
-        if (it->find_first_of('.') != std::string::npos || it->size() > 11)
-        {
-            return false;
-        }
-    }
-    // 对最后一项检查
-    if (tokens.back().size() > 11)
+
+    if (!this->validation_names(tokens))
     {
         return false;
     }
-    // 具体的文件名合法性检查略去
 
     // 从根目录开始定位
     DIR_ENTRY temp_dir_ent;
     FAT16_ENTRY ent_cluster_id = FAT16::ROOT_DIR_CLUSTER, prev_cluster_id = FAT16::INVALID_FAT16_ENTRY;
     for (std::vector<std::string>::iterator it = tokens.begin(); it != tokens.end(); ++it)
-    {   
+    {
         bool finded = this->find_entry(ent_cluster_id, *it, temp_dir_ent);
         if (!finded && it == tokens.end() - 1)
-        {   
+        {
             result.parent_dir_cluster = prev_cluster_id;
             result.file_name = *it;
             result.exists = false;
@@ -420,7 +391,7 @@ bool FAT16::resolve_path(const std::string &path, PathResult &result)
         {
             return false;
         }
-        else 
+        else
         {
             prev_cluster_id = ent_cluster_id;
             ent_cluster_id = temp_dir_ent.DIR_FstClusLO;
@@ -466,6 +437,27 @@ bool FAT16::LBA_to_PA(uint32_t cluster_id, uint32_t &block_id) const
         block_id = first_cluster_block_id + (cluster_id - 2) * this->DBR_512._BPB_.BPB_SecPerClus; //  套用公式获得簇物理地址
         return true;
     }
+}
+
+void FAT16::short_name_to_string(const uint8_t *DIR_Name, std::string &name)
+{   
+    std::string _name, _ext;
+    _name.clear();
+    _ext.clear();
+    size_t i = 0;
+    for (; i < 8 && DIR_Name[i] != ' '; ++i)
+    {
+        _name += DIR_Name[i];
+    }
+    while (DIR_Name[i] == ' ' && i < 11)
+    {
+        ++i;
+    }
+    for (; i < 11 && DIR_Name[i] != ' '; ++i)
+    {
+        _ext += DIR_Name[i];
+    }
+    name = _ext.empty() ? _name : (_name + '.' + _ext); 
 }
 
 void FAT16::validation_fat16(const std::string &disk_img)
@@ -651,3 +643,42 @@ void FAT16::validation_fat16(const std::string &disk_img)
         }
     }
 }
+
+std::string FAT16::normalize(const std::string &path) const
+{
+    std::string normalized_path = path;
+    std::string::iterator it = std::unique(normalized_path.begin(), normalized_path.end(), [](char a, char b)
+                                           { return a == '/' && b == '/'; });
+    normalized_path.erase(it, normalized_path.end());
+    std::for_each(normalized_path.begin(), normalized_path.end(), [](char &ch)
+                  { ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); });
+    return normalized_path;
+}
+
+bool FAT16::validation_names(const std::vector<std::string> &names) const
+{   
+    for (std::vector<std::string>::const_iterator it = names.begin(); it != names.end(); ++it)
+    {
+        if (it->empty() || it->find_first_of(" \"*/\\:<>?|") != std::string::npos || it->size() > 12)
+        {
+            return false;
+        }
+        size_t dot_pos = it->find_first_of('.');
+        if (dot_pos != std::string::npos && *it != "." && *it != "..")
+        {
+            if (it->find('.', dot_pos) != std::string::npos)
+            {
+                return false;
+            }
+            else
+            {
+                if (!(dot_pos < 9 && it->size() - 9 < 3))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
