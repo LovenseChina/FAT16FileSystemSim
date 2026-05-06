@@ -8,8 +8,6 @@
  * @date 2026-05-04
  */
 
-//  该版本测试导入22mb文件时长约4min
-
 #include <cstdint>
 #include <string>
 #include <vector>
