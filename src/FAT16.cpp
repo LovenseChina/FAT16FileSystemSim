@@ -437,29 +437,28 @@ bool FAT16::create_dir(const std::string &path)
     this->add_entry(path_result_info.parent_dir_cluster, pwd_dir_ent);
 
     // 建立目录文件
-    std::vector<DIR_ENTRY> dir_file(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_SecPerClus));
-    std::for_each(dir_file.begin(), dir_file.end(), [](DIR_ENTRY &de)
+    std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [](DIR_ENTRY &de)
                   { de.DIR_Name[0] = 0x00; });
     // 填写 ".." 与 "." 目录项
     // 第一项 "."
-    memset(&dir_file[0], ' ', 11);
-    dir_file[0].DIR_Name[0] = '.';
-    dir_file[0].DIR_Attr = 0x10;
-    dir_file[0].DIR_NTRes = 0;
-    dir_file[0].DIR_FstClusHI = 0x0000;
-    dir_file[0].DIR_FstClusLO = pwd_id;
-    dir_file[0].DIR_FileSize = 0;
+    memset(&this->sub_dir_file[0], ' ', 11);
+    this->sub_dir_file[0].DIR_Name[0] = '.';
+    this->sub_dir_file[0].DIR_Attr = 0x10;
+    this->sub_dir_file[0].DIR_NTRes = 0;
+    this->sub_dir_file[0].DIR_FstClusHI = 0x0000;
+    this->sub_dir_file[0].DIR_FstClusLO = pwd_id;
+    this->sub_dir_file[0].DIR_FileSize = 0;
     // 第二项 ".."
-    memset(&dir_file[1], ' ', 11);
-    dir_file[1].DIR_Name[0] = '.';
-    dir_file[1].DIR_Name[1] = '.';
-    dir_file[1].DIR_Attr = 0x10;
-    dir_file[1].DIR_NTRes = 0;
-    dir_file[1].DIR_FstClusHI = 0x0000;
-    dir_file[1].DIR_FstClusLO = path_result_info.parent_dir_cluster;
-    dir_file[1].DIR_FileSize = 0;
+    memset(&this->sub_dir_file[1], ' ', 11);
+    this->sub_dir_file[1].DIR_Name[0] = '.';
+    this->sub_dir_file[1].DIR_Name[1] = '.';
+    this->sub_dir_file[1].DIR_Attr = 0x10;
+    this->sub_dir_file[1].DIR_NTRes = 0;
+    this->sub_dir_file[1].DIR_FstClusHI = 0x0000;
+    this->sub_dir_file[1].DIR_FstClusLO = path_result_info.parent_dir_cluster;
+    this->sub_dir_file[1].DIR_FileSize = 0;
     // 写回目录文件
-    this->write_cluster(pwd_id, reinterpret_cast<char *>(dir_file.data()));
+    this->write_cluster(pwd_id, reinterpret_cast<char *>(this->sub_dir_file.data()));
     return true;
 }
 
