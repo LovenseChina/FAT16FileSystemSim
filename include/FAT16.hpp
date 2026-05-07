@@ -266,7 +266,7 @@ public:
     void short_name_to_string(const uint8_t *DIR_Name, std::string &name);
 
     // 获取分割后的文件名及其拓展名
-    void get_splitd_dir_name(const std::string &normalized_path, std::string &_name, std::string &_ext) const;
+    void get_splited_dir_name(const std::string &normalized_path, std::string &_name, std::string &_ext) const;
 
     /********** FAT16文件系统数据成员 **********/
     std::string disk_name;

@@ -128,7 +128,7 @@ bool FAT16::create_file(const std::string &path)
 
     // 获取文件名
     std::string _name, _ext;
-    this->get_splitd_dir_name(normalized_path, _name, _ext);
+    this->get_splited_dir_name(normalized_path, _name, _ext);
     std::string filename = _ext.empty() ? _name : _name + '.' + _ext;
     if (filename == "." || filename == "..")
     {
@@ -214,7 +214,7 @@ bool FAT16::delete_file(const std::string &path)
 
     // 获取文件名
     std::string _name, _ext, filename;
-    this->get_splitd_dir_name(normalized_path, _name, _ext);
+    this->get_splited_dir_name(normalized_path, _name, _ext);
     filename = _ext.empty() ? _name : (_name + '.' + _ext);
 
     // 开始删除文件
@@ -372,7 +372,7 @@ bool FAT16::write_file(const std::string &path, const std::vector<char> &data)
 
 bool FAT16::create_dir(const std::string &path)
 {
-    // 无可用空间不创建目录
+    // 无可用空间不创建目录，因为创建目录必然创建子目录
     if (this->free_cluster_ids.size() == 0)
     {
         std::cerr << "Error: Insufficient image storage capacity!\n";
@@ -406,7 +406,7 @@ bool FAT16::create_dir(const std::string &path)
 
     // 获取目录名
     std::string _name, _ext;
-    this->get_splitd_dir_name(normalized_path, _name, _ext);
+    this->get_splited_dir_name(normalized_path, _name, _ext);
     if (!_ext.empty())
     {
         std::cerr << "Error: Invalid directory name with '.'!\n";
@@ -882,7 +882,7 @@ bool FAT16::path_simplify(const std::string &normalized_path, std::string &simpl
         simplified_path = normalized_path;
         return true;
     }
-    while ((end = normalized_path.find('/', start)) != std::string::npos)
+    while ((end = normalized_path.find('/', start)) != std::string::npos)   // 这个 while 条件无法加入 "/" 根目录
     {
         if (end - start > 0)
         {
@@ -893,7 +893,7 @@ bool FAT16::path_simplify(const std::string &normalized_path, std::string &simpl
             }
             else if (tokens.back() == "..")
             {
-                if (tokens.size() >= 2) // POSIX 语义认为 "/.." 为 "/"
+                if (tokens.size() >= 2) // POSIX 语义认为 "/.." 等能解析到根目录的父目录为 "/" 即根目录
                 {
                     tokens.pop_back();
                 }
@@ -911,7 +911,7 @@ bool FAT16::path_simplify(const std::string &normalized_path, std::string &simpl
         }
         else if (tokens.back() == "..")
         {
-            if (tokens.size() >= 2) // POSIX 语义认为 "/.." 为 "/"
+            if (tokens.size() >= 2) // POSIX 语义认为 "/.." 等能解析到根目录的父目录为 "/" 即根目录
             {
                 tokens.pop_back();
             }
@@ -920,7 +920,7 @@ bool FAT16::path_simplify(const std::string &normalized_path, std::string &simpl
         }
     }
     simplified_path.clear();
-    std::for_each(tokens.begin(), tokens.end(), [&simplified_path](std::string &token)
+    std::for_each(tokens.begin(), tokens.end(), [&simplified_path](std::string &token)  // 由于 tokens 不含 "/" 根目录，所以下一 if 语句特殊处理化简路径为 "/" 根目录的简化路径
                   { simplified_path += "/"; simplified_path += token; });
     if (simplified_path.empty())
     {
@@ -956,7 +956,7 @@ bool FAT16::resolve_path(const std::string &normalized_path, PATH_RESULT &result
         }
         start = end + 1;
     }
-    if (start != simplified_path.size() && simplified_path != "/")
+    if (start != simplified_path.size() && simplified_path != "/")  // 路径最后一级如无 '/' 也要加入 tokens
     {
         tokens.push_back(simplified_path.substr(start, simplified_path.size()));
     }
@@ -989,16 +989,17 @@ bool FAT16::resolve_path(const std::string &normalized_path, PATH_RESULT &result
             par_cluster_id = temp_dir_ent.DIR_FstClusLO;
         }
     }
-    if (tokens.empty())
+    if (tokens.empty()) // 这表明解析结果是根目录
     {
-        result.parent_dir_cluster = FAT16::ROOT_DIR_CLUSTER;
-        result.parent_filename = "/";
+        result.parent_dir_cluster = FAT16::INVALID_FAT16_ENTRY; // 根目录没有父目录所以父目录簇号为无效值
+        result.parent_filename = ""; // 根目录没有父目录所以父目录名称为空
         memset(&result.entry, 0, sizeof(DIR_ENTRY)); // 根目录没有 entry
+        result.entry.DIR_FstClusLO = FAT16::ROOT_DIR_CLUSTER;   // 根目录的约定簇号有意义故仍然设置，增加上级调用判断的方式
     }
     else
     {
         result.parent_dir_cluster = save_par_cluster_id; // 使用父目录簇，而非文件自身簇
-        result.parent_filename = tokens.back();
+        result.parent_filename = tokens.back(); // token 生成过程使得每个名称都不会含有 '/'，名称后的 '/' 合法性由上层语义层判断
         memcpy(&(result.entry), &temp_dir_ent, sizeof(DIR_ENTRY));
     }
     result.exists = true;
@@ -1043,7 +1044,7 @@ bool FAT16::LBA_to_PA(uint32_t cluster_id, uint32_t &block_id) const
 
 void FAT16::short_name_to_string(const uint8_t *DIR_Name, std::string &name)
 {
-    // 处理空闲/已删除/无效目录项
+    // 处理空闲/已删除/无效目录项（由上层维护，无效目录项不会传入到此）
     if (DIR_Name[0] == 0x00 || DIR_Name[0] == 0xE5)
     {
         name = "";
@@ -1252,31 +1253,31 @@ void FAT16::validation_fat16(const std::string &disk_img)
     }
 }
 
-void FAT16::get_splitd_dir_name(const std::string &normalized_path, std::string &_name, std::string &_ext) const
+void FAT16::get_splited_dir_name(const std::string &normalized_path, std::string &_name, std::string &_ext) const
 {
     size_t name_start = normalized_path.find_last_of('/');
     size_t last_dot = normalized_path.find_last_of('.');
-    if (name_start == std::string::npos)
+    if (name_start == std::string::npos)    // 无 '/'
     {
-        if (last_dot == std::string::npos)
+        if (last_dot == std::string::npos)  // 无 '.'
         {
-            _name = normalized_path;
+            _name = normalized_path;    // 所以 DIR_Name 的 std::string 就是这个，如 normalized_path = "DIR1"
             _ext = "";
         }
-        else
+        else    // 有 '.'，如 normalized_path = "a.bc"
         {
             _name = normalized_path.substr(0, last_dot);
             _ext = normalized_path.substr(last_dot + 1, normalized_path.size() - last_dot - 1);
         }
     }
-    else
+    else    // 有 '/' 的路径，即如 normalized_path = "/DIR1/DIR2" 或 normalized_path = "DIR1/DIR2.XX"
     {
-        if (last_dot == std::string::npos || last_dot < name_start)
+        if (last_dot == std::string::npos || last_dot < name_start) // 完全没有 '.' 或者 '.' 在最后一个文件名称 token （路径最后一级）之前
         {
             _name = normalized_path.substr(name_start + 1, normalized_path.size() - name_start - 1);
             _ext = "";
         }
-        else
+        else    // 否则路径最后一级是具有 '.' 分割开来的 _name + '.' + _ext 形式
         {
             _name = normalized_path.substr(name_start + 1, last_dot - name_start - 1);
             _ext = normalized_path.substr(last_dot + 1, normalized_path.size() - last_dot - 1);
