@@ -488,7 +488,7 @@ bool FAT16::remove_dir(const std::string &path)
             std::cerr << "Error: Cannot read directory file!\n";
             return false;
         }
-        for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+        for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // it 从 begin + 2 开始忽略掉系统自带 "." 和 ".."
         {
             if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5)
             {
@@ -629,6 +629,7 @@ bool FAT16::change_dir(const std::string &path)
                 tokens.pop_back();
             }
         }
+        start = end + 1;
     }
     if (tokens.empty())
     {
