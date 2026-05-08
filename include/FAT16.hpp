@@ -134,10 +134,13 @@ public:
     bool create_dir(const std::string &path);                 // mkdir
     bool remove_dir(const std::string &path);                 // rmdir（目录必须为空）
     std::vector<DIR_ENTRY> list_dir(const std::string &path); // ls
+    void show_pwd() const { std::cout << this->pwd << '\n'; } // pwd
+    bool change_dir(const std::string &path);                 // cd
 
     // === 文件传输 ===
     bool export_file(const std::string &src_path, const std::string &dest_path);
     bool load_file(const std::string &src_path, const std::string &dest_path);
+    void sync();
 
 public:
     // private: 暂时设置为公有便于调试

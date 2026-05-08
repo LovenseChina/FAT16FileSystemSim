@@ -69,27 +69,7 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
 
 FAT16::~FAT16()
 {
-    if (this->device)
-    {
-        this->device->flush_to_file();
-    }
-    this->device.reset();
-
-    this->fat_table[1] = 0xffff;
-    std::fstream fout(this->disk_name, std::ios_base::binary | std::ios_base::out | std::ios_base::in);
-    if (!fout.is_open())
-    {
-        std::cerr << "Fatal error: meta data cannot flush to \"" << this->disk_name << "\"\nAbort.\n";
-        exit(EXIT_FAILURE);
-    }
-    fout.seekp(this->DBR_512._BPB_.BPB_BytsPerSec * this->DBR_512._BPB_.BPB_RsvdSecCnt, std::ios::beg);
-    fout.write(reinterpret_cast<const char *>(this->fat_table.data()), this->fat_table.size() * sizeof(FAT16_ENTRY));
-    if (this->DBR_512._BPB_.BPB_NumFATs == 2)
-    {
-        fout.write(reinterpret_cast<const char *>(this->fat_table.data()), this->fat_table.size() * sizeof(FAT16_ENTRY));
-    }
-    fout.write(reinterpret_cast<const char *>(this->root_entry_table.data()), this->root_entry_table.size() * sizeof(DIR_ENTRY));
-
+    this->sync();
     std::cout << "\"" << this->disk_name << "\" unmonted.\n";
 }
 
@@ -493,7 +473,7 @@ bool FAT16::remove_dir(const std::string &path)
         }
     }
     // 实际是文件，不能删除
-    if (path_result_info.entry.DIR_Attr == 0x00)
+    if (path_result_info.entry.DIR_Attr != 0x10)
     {
         std::cerr << "Error: \"" << path << "\" is not a directory!\n";
         return false;
@@ -592,6 +572,77 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
     return exist_dir_ents;
 }
 
+bool FAT16::change_dir(const std::string &path)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否 1：父级不存在
+    // 检查路径存在否 2：最后一级不存在
+    // 检查路径存在否 3：不是目录
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    if (!path_result_info.exists || !path_result_info.entry.DIR_Attr == 0x10)
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+
+    // 构造新的 pwd
+    // 构造绝对路径
+    if (normalized_path[0] != '/')
+    {
+        normalized_path = this->pwd + normalized_path;
+    }
+    if (normalized_path.back() != '/') // 这里 if 可以避免特殊处理最后一级字段
+    {
+        normalized_path.push_back('/');
+    }
+    std::vector<std::string> tokens;
+    tokens.clear();
+    size_t start = 0, end = 0;
+    while ((end = normalized_path.find('/', start)) != std::string::npos)
+    {
+        if (end - start > 0)
+        {
+            tokens.push_back(normalized_path.substr(start, end - start));
+            if (tokens.back() == ".")
+            {
+                tokens.pop_back();
+            }
+            else if (tokens.back() == "..")
+            {
+                if (tokens.size() >= 2)
+                {
+                    tokens.pop_back();
+                }
+                tokens.pop_back();
+            }
+        }
+    }
+    if (tokens.empty())
+    {
+        this->pwd = "/";
+    }
+    else
+    {
+        this->pwd.clear();
+        std::for_each(tokens.begin(), tokens.end(), [this](std::string &token)
+                      { this->pwd += '/'; this->pwd += token; });
+        this->pwd += '/';   // this->pwd 总以 '/' 结尾！
+    }
+}
+
 bool FAT16::export_file(const std::string &src_path, const std::string &dest_path)
 {
     std::vector<char> data_buffer;
@@ -640,6 +691,35 @@ bool FAT16::load_file(const std::string &src_path, const std::string &dest_path)
         return false;
     }
     return true;
+}
+
+void FAT16::sync()
+{
+    if (this->device)
+    {
+        this->fat_table[1] = 0xffff; // 认为 sync 后就可以安全移除镜像
+        this->device->flush_to_file();
+        // 写入 FAT 表
+        uint32_t sector_id = this->DBR_512._BPB_.BPB_RsvdSecCnt;
+        uint32_t fat_size = this->DBR_512._BPB_.BPB_FATSz16;
+        uint32_t num_fats = this->DBR_512._BPB_.BPB_NumFATs;
+        for (uint8_t i = 0; i < num_fats; ++i)
+        {
+            for (uint32_t j = 0; j < fat_size; ++j)
+            {
+                this->device->write_block(sector_id + j * i + j, reinterpret_cast<const char *>(this->fat_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * (j * i + j));
+            }
+        }
+        // 写入根目录
+        sector_id = sector_id + num_fats * fat_size;
+        uint32_t num_root_ent_sectors = this->DBR_512._BPB_.BPB_RootEntCnt * sizeof(DIR_ENTRY) / this->DBR_512._BPB_.BPB_BytsPerSec;
+        for (uint32_t i = 0; i < num_root_ent_sectors; ++i)
+        {
+            this->device->write_block(sector_id + i, reinterpret_cast<const char *>(this->root_entry_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * i);
+        }
+
+        std::cout << "Data of image has flush to file.\n";
+    }
 }
 
 /********** Layer 1: 簇操作 **********/
