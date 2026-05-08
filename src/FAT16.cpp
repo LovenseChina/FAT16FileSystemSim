@@ -46,9 +46,8 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
               << "FAT table constructed.\n"
               << "Root directory constructed.\n";
 
-    //  初始当前路径为根目录 /
+    //  初始当前路径为根目录 '/'
     this->pwd = "/";
-    this->pwd_cluster_id = FAT16::ROOT_DIR_CLUSTER;
 
     //  子目录文件初始化大小为1簇
     this->sub_dir_file.resize(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_SecPerClus) / sizeof(DIR_ENTRY));

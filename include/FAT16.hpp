@@ -276,7 +276,6 @@ public:
     std::vector<FAT16_ENTRY> free_cluster_ids; // 空闲簇号表
     std::vector<DIR_ENTRY> root_entry_table;   // 根目录表
     std::string pwd;                           // 当前目录，总以 '/' 结尾
-    FAT16_ENTRY pwd_cluster_id;                // 当前目录簇号
     std::vector<DIR_ENTRY> sub_dir_file;       // 子目录，按簇加载使用,因为子目录也是“普通文件”按簇链管理，只是为了不重复创建这一对象的临时缓冲
     std::unique_ptr<BlockDevice> device;       // 抽象块设备，虚拟磁盘的底层操作封装
 };
