@@ -399,7 +399,7 @@ bool FAT16::create_dir(const std::string &path)
         // 重名检查
         if (path_result_info.exists)
         {
-            std::cerr << "Error: file does not exist!\n";
+            std::cerr << "Error: File/directory already exists!\n";
             return false;
         }
     }
