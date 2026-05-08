@@ -277,7 +277,7 @@ public:
     std::vector<DIR_ENTRY> root_entry_table;   // 根目录表
     std::string pwd;                           // 当前目录，总以 '/' 结尾
     std::vector<DIR_ENTRY> sub_dir_file;       // 子目录，按簇加载使用,因为子目录也是“普通文件”按簇链管理，只是为了不重复创建这一对象的临时缓冲
-    std::unique_ptr<BlockDevice> device;       // 抽象块设备，虚拟磁盘的底层操作封装
+    std::unique_ptr<BlockDevice> device;       // 抽象块设备，虚拟磁盘的底层操作封装，注意块设备中一块在这里认为是一个扇区！
 };
 
 #endif
