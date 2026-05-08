@@ -1,6 +1,6 @@
 # FAT16 文件系统模拟器
 
-一个基于 **FAT16** 文件系统格式的轻量级模拟器，支持磁盘镜像的创建、读写、目录管理及文件传输。该项目使用 C++11 实现，提供了面向用户的 Shell 交互界面和底层块设备抽象，可用于学习 FAT16 内部结构或作为嵌入式文件系统的原型。
+一个基于 **FAT16** 文件系统格式的轻量级模拟器，支持磁盘镜像的创建、读写、目录管理及文件传输。该项目使用 C++11 实现，提供了面向用户的 Shell 交互界面和底层块设备抽象，可用于学习 FAT16 内部结构。
 
 ## 功能特性
 
@@ -13,7 +13,7 @@
   - 从主机导入文件到镜像（`import`）
   - 从镜像导出文件到主机（`export`）
 - **持久化**：所有修改可通过 `sync` 命令或程序正常退出时自动同步到底层磁盘镜像文件。
-- **安全卸载**：通过 FAT[1] 脏位标记检测上次是否正常卸载，防止数据损坏。
+- **安全卸载**：通过 FAT[1] 脏位标记检测上次是否正常卸载，防止数据损坏。(当然，还不完善)
 - **命令行 Shell**：内置交互式命令行，支持带空格的参数（使用双引号包裹）。
 
 ## 项目结构
@@ -89,28 +89,28 @@ exit	exit	退出 Shell（自动执行 sync）
 # 创建目录并进入
 fat16:/$ mkdir test
 fat16:/$ cd test
-fat16:/test/$ pwd
-/test/
+fat16:/TEST/$ pwd
+/TEST/
 
 # 创建文件并写入内容
-fat16:/test/$ touch a.txt
-fat16:/test/$ write a.txt "Hello, FAT16!"
+fat16:/TEST/$ touch a.txt
+fat16:/TEST/$ write a.txt "Hello, FAT16!"
 
 # 查看文件内容
-fat16:/test/$ cat a.txt
+fat16:/TEST/$ cat a.txt
 Hello, FAT16!
 
 # 导入主机文件
-fat16:/test/$ import /home/user/photo.jpg photo.jpg
+fat16:/TEST/$ import /home/user/photo.jpg photo.jpg
 
 # 导出的镜像文件到主机
-fat16:/test/$ export a.txt /tmp/a.txt
+fat16:/TEST/$ export a.txt /tmp/a.txt
 
 # 删除文件
-fat16:/test/$ rm a.txt
+fat16:/TEST/$ rm a.txt
 
 # 返回根目录并删除 test（需先删除其中所有文件，本例 test 下剩余 photo.jpg）
-fat16:/test/$ cd /
+fat16:/TEST/$ cd /
 fat16:/$ rm test/photo.jpg
 fat16:/$ rmdir test
 fat16:/$ exit
@@ -129,6 +129,8 @@ Goodbye.
 
 - 总簇数在 4085 ~ 65525 之间
 
+- 好吧一般不满足，除非生成的镜像没有签名，可以修改代码，参见 FAT16.cpp 文件中的注释
+
 2. 文件名规范
 
 - 短文件名（8.3 格式）：主名最多 8 字符，扩展名最多 3 字符，字母自动转为大写。
@@ -138,7 +140,7 @@ Goodbye.
 - 保留名 . 和 .. 不能作为用户创建的文件或目录名。
 
 3. 目录删除
-rmdir 仅能删除空目录（即除 . 和 .. 外无其他条目）。删除非空目录前需手动清空其中的文件和子目录。
+rmdir 仅能删除空目录（即除 . 和 .. 外无其他条目）。删除非空目录前需手动清空其中的文件和子目录，自动回收空目录文件。
 
 4. 持久化时机
 
@@ -147,6 +149,8 @@ rmdir 仅能删除空目录（即除 . 和 .. 外无其他条目）。删除非�
 - 使用 Ctrl+C 强制终止不会执行 sync，可能导致磁盘镜像损坏（下次挂载时会显示警告）。
 
 - 建议在关键操作后手动执行 sync。
+
+- 事实上脏位在 sync 后不起效了，几乎应该在 FAT16 类成员函数中添加置脏位代码，我忘了。
 
 5. 块设备抽象层
 FileBackedBlockDevice 将每个扇区视为一个块，使用 std::fstream 进行随机读写。所有 FAT16 上层 API 均基于簇操作，最终通过块设备写入镜像文件。
