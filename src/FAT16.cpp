@@ -472,7 +472,7 @@ bool FAT16::remove_dir(const std::string &path)
             return false;
         }
     }
-    // 实际是文件，不能删除
+    // 实际不是目录，不能删除
     if (path_result_info.entry.DIR_Attr != 0x10)
     {
         std::cerr << "Error: \"" << path << "\" is not a directory!\n";
