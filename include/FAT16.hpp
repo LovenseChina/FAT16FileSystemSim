@@ -142,8 +142,7 @@ public:
     bool load_file(const std::string &src_path, const std::string &dest_path);
     void sync();
 
-public:
-    // private: 暂时设置为公有便于调试
+private:
     /********** Layer 1: 簇操作 **********/
 
     // === 簇分配与回收 ===
