@@ -17,7 +17,7 @@
 - **命令行 Shell**：内置交互式命令行，支持带空格的参数（使用双引号包裹）。
 
 ## 项目结构
-
+```
 project/
 ├── include/ # 头文件目录
 │ ├── BlockDevice.hpp # 块设备抽象基类及文件实现类声明
@@ -32,7 +32,7 @@ project/
 │ ├── fat16_disk_generator.cpp # FAT16 空镜像生成器，固定生成约 32mb 大小的合法镜像
 │ └── hexer.cpp # 用于查看文件二进制数据的简易软件
 └── README.md # 本文件
-
+```
 
 ## 编译与运行
 
