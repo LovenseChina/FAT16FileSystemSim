@@ -2,16 +2,16 @@
  * @file FAT16.cpp
  * @author Tang Jun-Chi (chinatrq@outlook.com)
  * 部分 code review 由我本人完成，部分是 deepseek 与我共同完成
- * @brief 
+ * @brief
  * FAT16 的一个简易模拟器实现
  * 如果想读取其它软件产生的 FAT16 超级软盘格式镜像文件
  * 可以手动修改代码 FAT16::validation_fat16() 中过分的合法性检查
  * 或者直接注释掉 FAT16::FAT16() 中的 this->FAT16::validation_fat16();
  * @version 1.0
  * @date 2026-05-08
- * 
+ *
  * @copyright Copyright (c) 2026
- * 
+ *
  */
 #include "../include/FAT16.hpp"
 #include "../include/BlockDevice.hpp"
@@ -107,9 +107,15 @@ bool FAT16::create_file(const std::string &path)
                   << "path: " << normalized_path << "\n";
         return false;
     }
+    if (path_result_info.exists && path_result_info.entry.DIR_Attr == 0x10)
+    {
+        std::cerr << "Error: Filenmae \"" << path << "\" has already used by directory!\n";
+        return false;
+    }
     //  重名检查
     if (path_result_info.exists)
     {
+
         std::cerr << "Error: file \"" << path << "\" already exsits!\n";
         return false;
     }
@@ -503,7 +509,7 @@ bool FAT16::remove_dir(const std::string &path)
             std::cerr << "Error: Cannot read directory file!\n";
             return false;
         }
-        for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // it 从 begin + 2 开始忽略掉系统自带 "." 和 ".."
+        for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it) // it 从 begin + 2 开始忽略掉系统自带 "." 和 ".."
         {
             if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5)
             {
