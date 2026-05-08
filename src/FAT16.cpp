@@ -581,25 +581,61 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
                 return std::vector<DIR_ENTRY>(0);
             }
             std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [&exist_dir_ents](DIR_ENTRY &de)
-                          { if (de.DIR_Name[0] = 0x00) { exist_dir_ents.push_back(de); } });
+                          { if (de.DIR_Name[0] != 0x00) { exist_dir_ents.push_back(de); } });
+            dir_cluster = this->follow_fat_chain(dir_cluster);
         }
-        dir_cluster = this->follow_fat_chain(dir_cluster);
     }
     return exist_dir_ents;
 }
 
 bool FAT16::export_file(const std::string &src_path, const std::string &dest_path)
 {
-    // 暂时不实现
-    std::cerr << "Error: Not implemented!\n";
-    return false;
+    std::vector<char> data_buffer;
+    if (!this->read_file(src_path, data_buffer))
+    {
+        // FAT16::read_file 直接输出具体报错信息
+        std::cerr << "Error: file export failed!\n";
+        return false;
+    }
+    std::fstream fout(dest_path, std::ios_base::binary | std::ios_base::out);   // 注意输出文件被自动截断大小为0
+    if (!fout.is_open())
+    {
+        std::cerr << "Error: Cannot create \"" << dest_path << "\"\n";
+        return false;
+    }
+    fout.write(data_buffer.data(), data_buffer.size());
+    return true;
 }
 
 bool FAT16::load_file(const std::string &src_path, const std::string &dest_path)
-{
-    // 暂时不实现
-    std::cerr << "Error: Not implemented!\n";
-    return false;
+{   
+    std::fstream fin(src_path, std::ios_base::binary | std::ios_base::in);
+    if (!fin.is_open())
+    {
+        std::cerr << "Error: Cannot read \"" << src_path << "\"\n";
+        return false;
+    }
+    if (!this->create_file(dest_path))
+    {
+        // FAT16::create_file() 显示具体错误信息
+        std::cerr << "Error: file load failed!\n";
+        return false;
+    }
+    fin.seekg(0, std::ios::end);
+    uint32_t file_size = fin.tellg();
+    fin.clear();
+    fin.seekg(0, std::ios::beg);
+    std::vector<char> data_buffer(file_size);
+    fin.read(data_buffer.data(), file_size);
+    if (!this->write_file(dest_path, data_buffer))
+    {
+        // FAT16::write_file() 显示具体错误信息
+        std::cerr << "Error: file load failed!\n";
+        // 回滚，删除空文件
+        this->delete_file(dest_path);
+        return false;
+    }
+    return true;
 }
 
 /********** Layer 1: 簇操作 **********/

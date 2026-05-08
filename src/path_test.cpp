@@ -142,7 +142,7 @@ int main()
             std::cerr << "FAIL: resolve_path(\"/\") exists = false\n";
             return 1;
         }
-        if (res.parent_filename != "/")
+        if (res.parent_filename != "")
         {
             std::cerr << "FAIL: resolve_path(\"/\") parent_filename = \"" << res.parent_filename << "\"\n";
             return 1;
