@@ -865,25 +865,45 @@ bool FAT16::remove_entry(FAT16_ENTRY dir_cluster, const std::string &name)
         }
         return false;
     }
-    else
+    else    // 在这里会尝试将空子目录文件的簇回收
     {
-        while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
+        FAT16_ENTRY prev_dir_cluster = dir_cluster, curr_dir_cluster = dir_cluster;
+        while (curr_dir_cluster >= 2 && curr_dir_cluster <= this->max_cluster_id)
         {
-            if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            if (!this->read_cluster(curr_dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
             {
                 return false;
             }
-            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // "." 和 ".." 目录项不能删除故不需比较
             {
                 this->short_name_to_string(it->DIR_Name, _name);
                 if (_name == name)
                 {
                     it->DIR_Name[0] = 0xE5;
-                    this->write_cluster(dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data()));
+                    for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // 检查目录文件是否为空，同样不检查 "." 和 ".."
+                    {
+                        if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5)    // 若目录不空则直接写回并返回
+                        {
+                            this->write_cluster(curr_dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data()));
+                            return true;
+                        }
+                    }
+                    // 不允许释放目录文件首簇，首簇仍然写回
+                    if (prev_dir_cluster == curr_dir_cluster)
+                    {
+                        this->write_cluster(curr_dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data()));
+                    }
+                    else
+                    {
+                        // 已经是空子目录文件簇，直接释放掉这一簇
+                        this->fat_table[prev_dir_cluster] = this->follow_fat_chain(curr_dir_cluster);   // 让前驱指向当前簇后继
+                        this->fat_table[curr_dir_cluster] = 0x0000; // 释放当前簇
+                    }
                     return true;
                 }
             }
-            dir_cluster = this->follow_fat_chain(dir_cluster);
+            prev_dir_cluster = curr_dir_cluster;
+            curr_dir_cluster = this->follow_fat_chain(curr_dir_cluster);
         }
         return false;
     }
