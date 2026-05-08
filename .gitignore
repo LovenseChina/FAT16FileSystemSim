@@ -1,4 +1,5 @@
 *.exe
+*.o
 *.disk
 *.gif
 *.mp4

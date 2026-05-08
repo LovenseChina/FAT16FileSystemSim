@@ -1,17 +1,1316 @@
+/**
+ * @file FAT16.cpp
+ * @author Tang Jun-Chi (chinatrq@outlook.com)
+ * 部分 code review 由我本人完成，部分是 deepseek 与我共同完成
+ * @brief 
+ * FAT16 的一个简易模拟器实现
+ * 如果想读取其它软件产生的 FAT16 超级软盘格式镜像文件
+ * 可以手动修改代码 FAT16::validation_fat16() 中过分的合法性检查
+ * 或者直接注释掉 FAT16::FAT16() 中的 this->FAT16::validation_fat16();
+ * @version 1.0
+ * @date 2026-05-08
+ * 
+ * @copyright Copyright (c) 2026
+ * 
+ */
 #include "../include/FAT16.hpp"
 #include "../include/BlockDevice.hpp"
 
 FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
 {
     //  读取DBR
-    std::ifstream disk_in(disk_img, std::ios_base::binary);
+    std::ifstream disk_in(disk_img, std::ios_base::binary | std::ios_base::in);
     if (!disk_in.is_open())
     {
         std::cerr << "Cannot open disk image \"" << disk_img
-                  << "\"\nAobrt.\n";
+                  << "\"\nAbort.\n";
         exit(EXIT_FAILURE);
     }
     disk_in.read(reinterpret_cast<char *>(&this->DBR_512), 512); //  如果 BPB_BytsPerSec > 512 则存在此域，全部置零，故只需读入起始512字节
+
+    //  构造FAT表
+    uint32_t fat16_table_bytes = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec);
+    this->fat_table.resize(fat16_table_bytes / sizeof(FAT16_ENTRY));
+    disk_in.read(reinterpret_cast<char *>(this->fat_table.data()), fat16_table_bytes);
+    disk_in.seekg(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec), std::ios::cur); //  忽略冗余FAT
+
+    //  计算最大簇号
+    this->max_cluster_id = this->get_total_clusters() + 1;
+
+    //  构造空闲簇号表
+    for (FAT16_ENTRY i = 2; i <= max_cluster_id; ++i)
+    {
+        if (this->fat_table[i] == 0x0000)
+        {
+            this->free_cluster_ids.push_back(i);
+        }
+    }
+
+    //  构造根目录表
+    uint32_t root_table_bytes = 32 * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_RootEntCnt);
+    this->root_entry_table.resize(this->DBR_512._BPB_.BPB_RootEntCnt);
+    disk_in.read(reinterpret_cast<char *>(this->root_entry_table.data()), root_table_bytes);
+
+    //  关闭文件流
+    disk_in.close();
+
+    //  验证镜像
+    this->validation_fat16(disk_img);
+
+    std::cout << "Disk meta data all check clear.\n"
+              << "FAT table constructed.\n"
+              << "Root directory constructed.\n";
+
+    //  初始当前路径为根目录 '/'
+    this->pwd = "/";
+
+    //  子目录文件初始化大小为1簇
+    this->sub_dir_file.resize(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_SecPerClus) / sizeof(DIR_ENTRY));
+
+    //  依据DBR数据构造块设备
+    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ? this->DBR_512._BPB_.BPB_TotSec16 : this->DBR_512._BPB_.BPB_TotSec32;
+    this->device.reset(new FileBackedBlockDevice(disk_img, this->DBR_512._BPB_.BPB_BytsPerSec, total_sectors));
+
+    // 检测FAT[1]并置为0x0（脏位）
+    if (this->fat_table[1] != 0xffff)
+    {
+        std::cout << "CAUTION: \"" << disk_img
+                  << "\" was detected as not being properly removed last time!\n";
+    }
+    this->fat_table[1] = 0;
+
+    std::cout << "\"" << disk_img << "\" has mounted.\n";
+}
+
+FAT16::~FAT16()
+{
+    this->sync();
+    std::cout << "\"" << this->disk_name << "\" unmonted.\n";
+}
+
+/********** ### Layer 4: 文件/目录操作（面向用户的 API） **********/
+
+bool FAT16::create_file(const std::string &path)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    //  重名检查
+    if (path_result_info.exists)
+    {
+        std::cerr << "Error: file \"" << path << "\" already exsits!\n";
+        return false;
+    }
+    // 检查是否末尾有 '/'
+    if (path.back() == '/')
+    {
+        std::cerr << "Sytax error: Empty filename!\n";
+        return false;
+    }
+
+    // 获取文件名
+    std::string _name, _ext;
+    this->get_splited_dir_name(normalized_path, _name, _ext);
+    std::string filename = _ext.empty() ? _name : _name + '.' + _ext;
+    if (filename == "." || filename == "..")
+    {
+        std::cerr << "Error: Reserved filename: " << filename << "\n";
+        return false;
+    }
+
+    // 创建目录项，开始填写文件元数据
+    DIR_ENTRY new_dir_ent;
+    // 填写 DIR_Name
+    memset(new_dir_ent.DIR_Name, ' ', 11);
+    for (size_t i = 0; i < 8 && i < _name.size(); ++i)
+    {
+        new_dir_ent.DIR_Name[i] = _name[i];
+    }
+    for (size_t i = 8; i < 11 && i - 8 < _ext.size(); ++i)
+    {
+        new_dir_ent.DIR_Name[i] = _ext[i - 8];
+    }
+    new_dir_ent.DIR_Attr = 0x00;
+    new_dir_ent.DIR_NTRes = 0x00;
+    // 日期相关信息无关紧要暂时忽略
+    // new_dir_ent.DIR_CrtTimeTenth
+    // new_dir_ent.DIR_CrtTime
+    // new_dir_ent.DIR_CrtDate
+    // new_dir_ent.DIR_LstAccDate
+    // new_dir_ent.DIR_WrtTime
+    // new_dir_ent.DIR_WrtDate
+
+    new_dir_ent.DIR_FstClusHI = 0x0000; // FAT16 下无用，但考虑镜像向前兼容置为0
+    new_dir_ent.DIR_FstClusLO = 0xffff; // 空文件
+    new_dir_ent.DIR_FileSize = 0;
+    // 目录项/文件元数据填写完毕
+
+    if (!this->add_entry(path_result_info.parent_dir_cluster, new_dir_ent))
+    {
+        std::cerr << "Error: Insufficient FCBs\n";
+        return false;
+    }
+    else
+    {
+        return true;
+    }
+}
+
+bool FAT16::delete_file(const std::string &path)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    else
+    { // 文件不存在不能删除
+        if (!path_result_info.exists)
+        {
+            std::cerr << "Error: file does not exist!\n";
+            return false;
+        }
+    }
+    // 检查是否末尾有 '/'
+    if (path.back() == '/')
+    {
+        std::cerr << "Sytax error: Empty filename!\n";
+        return false;
+    }
+    // 实际是目录，不能删除
+    if (path_result_info.entry.DIR_Attr == 0x10)
+    {
+        std::cerr << "Error: \"" << path << "\" is not a file!\n";
+        return false;
+    }
+
+    // 获取文件名
+    std::string _name, _ext, filename;
+    this->get_splited_dir_name(normalized_path, _name, _ext);
+    filename = _ext.empty() ? _name : (_name + '.' + _ext);
+
+    // 开始删除文件
+    // step 1: 回收簇
+    // step 2: 回收目录项
+    if (path_result_info.entry.DIR_FstClusLO != 0xffff)
+    {
+        this->free_cluster_chain(path_result_info.entry.DIR_FstClusLO);
+    }
+    this->remove_entry(path_result_info.parent_dir_cluster, filename);
+
+    return true;
+}
+
+bool FAT16::read_file(const std::string &path, std::vector<char> &buffer)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    else
+    { // 文件不存在不能读取
+        if (!path_result_info.exists)
+        {
+            std::cerr << "Error: file does not exist!\n";
+            return false;
+        }
+    }
+    // 检查是否末尾有 '/'
+    if (path.back() == '/')
+    {
+        std::cerr << "Sytax error: Empty filename!\n";
+        return false;
+    }
+    // 实际是目录，不能读取
+    if (path_result_info.entry.DIR_Attr == 0x10)
+    {
+        std::cerr << "Error: \"" << path << "\" is not a file!\n";
+        return false;
+    }
+
+    // 开始读取文件
+    uint32_t remaining_bytes = path_result_info.entry.DIR_FileSize;
+    uint32_t cluster_size = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_SecPerClus);
+    buffer.resize((remaining_bytes - 1 + cluster_size) / cluster_size * cluster_size); // 先将缓冲大小做成总簇数
+    FAT16_ENTRY reading_cluster_id = path_result_info.entry.DIR_FstClusLO;
+    size_t cluster_count = 0;
+    while (remaining_bytes > 0 && reading_cluster_id != 0xffff)
+    {
+        if (!this->read_cluster(reading_cluster_id, buffer.data() + cluster_size * cluster_count))
+        {
+            std::cerr << "Error: Cannot read file";
+            return false;
+        }
+        reading_cluster_id = follow_fat_chain(reading_cluster_id);
+        remaining_bytes -= cluster_size;
+        ++cluster_count;
+    }
+    buffer.resize(path_result_info.entry.DIR_FileSize); // 再将缓冲大小设置为文件大小
+    return true;
+}
+
+bool FAT16::write_file(const std::string &path, const std::vector<char> &data)
+{
+    // 计算文件所需簇
+    uint32_t cluster_size = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_SecPerClus);
+    uint32_t clusters_need = (data.size() - 1 + cluster_size) / cluster_size;
+    if (this->free_cluster_ids.size() < clusters_need)
+    {
+        std::cerr << "Error: Insufficient image storage capacity!\n";
+        return false;
+    }
+
+    // 以下开始查询文件FCB
+
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    else
+    {
+        // 文件不存在不能覆写
+        if (!path_result_info.exists)
+        {
+            std::cerr << "Error: file does not exist!\n";
+            return false;
+        }
+    }
+    // 检查是否末尾有 '/'
+    if (path.back() == '/')
+    {
+        std::cerr << "Sytax error: empty filename!\n";
+        return false;
+    }
+    // 实际是目录，不能覆写
+    if (path_result_info.entry.DIR_Attr == 0x10)
+    {
+        std::cerr << "Error: \"" << path << "\" is not a file!\n";
+        return false;
+    }
+
+    // 先写入文件数据
+    std::vector<char> dup_data = data;
+    dup_data.resize(clusters_need * cluster_size); // 不必关心垃圾值
+    FAT16_ENTRY start_cluster_id = this->alloc_cluster();
+    FAT16_ENTRY prev_cluster_id, curr_cluster_id = start_cluster_id;
+    for (size_t i = 0; i < clusters_need; ++i)
+    {
+        if (i != 0)
+        {
+            prev_cluster_id = curr_cluster_id;
+            curr_cluster_id = this->alloc_cluster();
+            this->fat_table[prev_cluster_id] = curr_cluster_id;
+        }
+        if (!this->write_cluster(curr_cluster_id, dup_data.data() + i * cluster_size))
+        {
+            // 回滚
+            this->free_cluster_chain(start_cluster_id);
+            std::cerr << "Error: file truct & write failed!\n";
+            return false;
+        }
+    }
+    path_result_info.entry.DIR_FileSize = data.size();
+
+    // 再修改目录项
+    // 先移除原本目录项，再添加这个目录项
+    this->remove_entry(path_result_info.parent_dir_cluster, path_result_info.parent_filename);
+    this->free_cluster_chain(path_result_info.entry.DIR_FstClusLO); // 回收旧数据占用空间
+    path_result_info.entry.DIR_FstClusLO = start_cluster_id;        // 修改起始簇号
+    this->add_entry(path_result_info.parent_dir_cluster, path_result_info.entry);
+    return true;
+}
+
+bool FAT16::create_dir(const std::string &path)
+{
+    // 无可用空间不创建目录，因为创建目录必然创建子目录
+    if (this->free_cluster_ids.size() == 0)
+    {
+        std::cerr << "Error: Insufficient image storage capacity!\n";
+        return false;
+    }
+
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    else
+    {
+        // 重名检查
+        if (path_result_info.exists)
+        {
+            std::cerr << "Error: File/directory already exists!\n";
+            return false;
+        }
+    }
+
+    // 获取目录名
+    std::string _name, _ext;
+    this->get_splited_dir_name(normalized_path, _name, _ext);
+    if (!_ext.empty())
+    {
+        std::cerr << "Error: Invalid directory name with '.'!\n";
+        return false;
+    }
+    if (_name == "." || _name == "..")
+    {
+        std::cerr << "Error: Reserved directory name: " << _name << "\n";
+        return false;
+    }
+
+    // 生成当前目录项并加入父目录文件
+    FAT16_ENTRY pwd_id = this->alloc_cluster();
+    DIR_ENTRY pwd_dir_ent;
+    memset(pwd_dir_ent.DIR_Name, ' ', 11);
+    for (size_t i = 0; i < _name.size(); ++i)
+    {
+        pwd_dir_ent.DIR_Name[i] = _name[i];
+    }
+    pwd_dir_ent.DIR_Attr = 0x10;
+    pwd_dir_ent.DIR_NTRes = 0x00;
+
+    // 忽略时间相关字段，以下相同
+
+    pwd_dir_ent.DIR_FstClusHI = 0x0000;
+    pwd_dir_ent.DIR_FstClusLO = pwd_id;
+    pwd_dir_ent.DIR_FileSize = 0; // 不关心目录文件大小，反正是整簇大小
+    if (!this->add_entry(path_result_info.parent_dir_cluster, pwd_dir_ent))
+    {
+        std::cerr << "Error: Cannot create directory -- cannot add FCB!\n";
+        this->free_cluster_chain(pwd_id);
+        return false;
+    }
+
+    // 建立目录文件
+    std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [](DIR_ENTRY &de)
+                  { de.DIR_Name[0] = 0x00; });
+    // 填写 ".." 与 "." 目录项
+    // 第一项 "."
+    memset(&this->sub_dir_file[0], ' ', 11);
+    this->sub_dir_file[0].DIR_Name[0] = '.';
+    this->sub_dir_file[0].DIR_Attr = 0x10;
+    this->sub_dir_file[0].DIR_NTRes = 0;
+    this->sub_dir_file[0].DIR_FstClusHI = 0x0000;
+    this->sub_dir_file[0].DIR_FstClusLO = pwd_id;
+    this->sub_dir_file[0].DIR_FileSize = 0;
+    // 第二项 ".."
+    memset(&this->sub_dir_file[1], ' ', 11);
+    this->sub_dir_file[1].DIR_Name[0] = '.';
+    this->sub_dir_file[1].DIR_Name[1] = '.';
+    this->sub_dir_file[1].DIR_Attr = 0x10;
+    this->sub_dir_file[1].DIR_NTRes = 0;
+    this->sub_dir_file[1].DIR_FstClusHI = 0x0000;
+    this->sub_dir_file[1].DIR_FstClusLO = path_result_info.parent_dir_cluster;
+    this->sub_dir_file[1].DIR_FileSize = 0;
+    // 写回目录文件
+    this->write_cluster(pwd_id, reinterpret_cast<char *>(this->sub_dir_file.data()));
+    return true;
+}
+
+bool FAT16::remove_dir(const std::string &path)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    else
+    {
+        // 不存在该目录
+        if (!path_result_info.exists)
+        {
+            std::cerr << "Error: file does not exist!\n";
+            return false;
+        }
+    }
+    // 实际不是目录，不能删除
+    if (path_result_info.entry.DIR_Attr != 0x10)
+    {
+        std::cerr << "Error: \"" << path << "\" is not a directory!\n";
+        return false;
+    }
+
+    // 当前目录判空，不删根目录
+    FAT16_ENTRY dir_cluster = path_result_info.entry.DIR_FstClusLO;
+    while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
+    {
+        if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+        {
+            std::cerr << "Error: Cannot read directory file!\n";
+            return false;
+        }
+        for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // it 从 begin + 2 开始忽略掉系统自带 "." 和 ".."
+        {
+            if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5)
+            {
+                std::cerr << "Error: Only empty direcotry can be removed!\n";
+                return false;
+            }
+        }
+        dir_cluster = this->follow_fat_chain(dir_cluster);
+    }
+
+    // 对空目录进行删除，不删根目录
+    // step 1:释放目录文件空间
+    this->free_cluster_chain(path_result_info.entry.DIR_FstClusLO);
+    // step 2:删除该目录项，这里必须要删除不进行回滚，反正是错误数据
+    std::string _name, _ext;
+    this->get_splited_dir_name(normalized_path, _name, _ext);
+    if (!_ext.empty())
+    {
+        std::cerr << "Error: Disk image may corrupted but can still usable!\n";
+    }
+    this->remove_entry(path_result_info.parent_dir_cluster, _name);
+    return true;
+}
+
+std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return std::vector<DIR_ENTRY>(0);
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return std::vector<DIR_ENTRY>(0);
+    }
+    else
+    {
+        // 不存在该目录
+        if (!path_result_info.exists)
+        {
+            std::cerr << "Error: directory does not exist!\n";
+            return std::vector<DIR_ENTRY>(0);
+        }
+    }
+    // 实际是文件，不能列出目录内容
+    if (path_result_info.entry.DIR_Attr == 0x00)
+    {
+        std::cerr << "Error: \"" << path << "\" is not a directory!\n";
+        return std::vector<DIR_ENTRY>(0);
+    }
+
+    // 读取目录文件的目录项，根目录和子目录需要区分
+    std::vector<DIR_ENTRY> exist_dir_ents;
+    exist_dir_ents.clear();
+    if (path_result_info.entry.DIR_FstClusLO == FAT16::ROOT_DIR_CLUSTER)
+    {
+        std::for_each(this->root_entry_table.begin(), this->root_entry_table.end(), [&exist_dir_ents](DIR_ENTRY &de)
+                      { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5) { exist_dir_ents.push_back(de); } });
+    }
+    else
+    {
+        FAT16_ENTRY dir_cluster = path_result_info.entry.DIR_FstClusLO;
+        while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
+        {
+            if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            {
+                std::cerr << "Error: Cannot read directory file!\n";
+                return std::vector<DIR_ENTRY>(0);
+            }
+            std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [&exist_dir_ents](DIR_ENTRY &de)
+                          { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5) { exist_dir_ents.push_back(de); } });
+            dir_cluster = this->follow_fat_chain(dir_cluster);
+        }
+    }
+    return exist_dir_ents;
+}
+
+bool FAT16::change_dir(const std::string &path)
+{
+    std::string normalized_path;
+    // 检查路径格式正确性
+    if (!this->path_normalizer(path, normalized_path))
+    {
+        std::cerr << "Syntax error: Invalid path!\n";
+        return false;
+    }
+    PATH_RESULT path_result_info;
+    // 检查路径存在否 1：父级不存在
+    // 检查路径存在否 2：最后一级不存在
+    // 检查路径存在否 3：不是目录
+    if (!this->resolve_path(normalized_path, path_result_info))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+    if (!path_result_info.exists || !(path_result_info.entry.DIR_Attr & 0x10))
+    {
+        std::cerr << "Error: Path does not exist!\n"
+                  << "path: " << normalized_path << "\n";
+        return false;
+    }
+
+    // 构造新的 pwd
+    // 构造绝对路径
+    if (normalized_path[0] != '/')
+    {
+        normalized_path = this->pwd + normalized_path;
+    }
+    if (normalized_path.back() != '/') // 这里 if 可以避免特殊处理最后一级字段
+    {
+        normalized_path.push_back('/');
+    }
+    std::vector<std::string> tokens;
+    tokens.clear();
+    size_t start = 0, end = 0;
+    while ((end = normalized_path.find('/', start)) != std::string::npos)
+    {
+        if (end - start > 0)
+        {
+            tokens.push_back(normalized_path.substr(start, end - start));
+            if (tokens.back() == ".")
+            {
+                tokens.pop_back();
+            }
+            else if (tokens.back() == "..")
+            {
+                if (tokens.size() >= 2)
+                {
+                    tokens.pop_back();
+                }
+                tokens.pop_back();
+            }
+        }
+        start = end + 1;
+    }
+    if (tokens.empty())
+    {
+        this->pwd = "/";
+    }
+    else
+    {
+        this->pwd.clear();
+        std::for_each(tokens.begin(), tokens.end(), [this](std::string &token)
+                      { this->pwd += '/'; this->pwd += token; });
+        this->pwd += '/'; // this->pwd 总以 '/' 结尾！
+    }
+    return true;
+}
+
+bool FAT16::export_file(const std::string &src_path, const std::string &dest_path)
+{
+    std::vector<char> data_buffer;
+    if (!this->read_file(src_path, data_buffer))
+    {
+        // FAT16::read_file 直接输出具体报错信息
+        std::cerr << "Error: file export failed!\n";
+        return false;
+    }
+    std::fstream fout(dest_path, std::ios_base::binary | std::ios_base::out); // 注意输出文件被自动截断大小为0
+    if (!fout.is_open())
+    {
+        std::cerr << "Error: Cannot create \"" << dest_path << "\"\n";
+        return false;
+    }
+    fout.write(data_buffer.data(), data_buffer.size());
+    return true;
+}
+
+bool FAT16::load_file(const std::string &src_path, const std::string &dest_path)
+{
+    std::fstream fin(src_path, std::ios_base::binary | std::ios_base::in);
+    if (!fin.is_open())
+    {
+        std::cerr << "Error: Cannot read \"" << src_path << "\"\n";
+        return false;
+    }
+    if (!this->create_file(dest_path))
+    {
+        // FAT16::create_file() 显示具体错误信息
+        std::cerr << "Error: file load failed!\n";
+        return false;
+    }
+    fin.seekg(0, std::ios::end);
+    uint32_t file_size = fin.tellg();
+    fin.clear();
+    fin.seekg(0, std::ios::beg);
+    std::vector<char> data_buffer(file_size);
+    fin.read(data_buffer.data(), file_size);
+    if (!this->write_file(dest_path, data_buffer))
+    {
+        // FAT16::write_file() 显示具体错误信息
+        std::cerr << "Error: file load failed!\n";
+        // 回滚，删除空文件
+        this->delete_file(dest_path);
+        return false;
+    }
+    return true;
+}
+
+void FAT16::sync()
+{
+    if (this->device)
+    {
+        this->fat_table[1] = 0xffff; // 认为 sync 后就可以安全移除镜像
+        // 写入 FAT 表
+        uint32_t sector_id = this->DBR_512._BPB_.BPB_RsvdSecCnt;
+        uint32_t fat_size = this->DBR_512._BPB_.BPB_FATSz16;
+        uint32_t num_fats = this->DBR_512._BPB_.BPB_NumFATs;
+        for (uint8_t i = 0; i < num_fats; ++i)
+        {
+            for (uint32_t j = 0; j < fat_size; ++j)
+            {
+                this->device->write_block(sector_id + i * fat_size + j, reinterpret_cast<const char *>(this->fat_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * j);
+            }
+        }
+        // 写入根目录
+        sector_id = sector_id + num_fats * fat_size;
+        uint32_t num_root_ent_sectors = this->DBR_512._BPB_.BPB_RootEntCnt * sizeof(DIR_ENTRY) / this->DBR_512._BPB_.BPB_BytsPerSec;
+        for (uint32_t i = 0; i < num_root_ent_sectors; ++i)
+        {
+            this->device->write_block(sector_id + i, reinterpret_cast<const char *>(this->root_entry_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * i);
+        }
+        this->device->flush_to_file();
+
+        std::cout << "Data of image has flush to file.\n";
+    }
+}
+
+/********** Layer 1: 簇操作 **********/
+
+FAT16::FAT16_ENTRY FAT16::alloc_cluster()
+{
+    if (this->free_cluster_ids.empty())
+    {
+        return FAT16::INVALID_FAT16_ENTRY;
+    }
+    FAT16_ENTRY empty_cluster_id = this->free_cluster_ids.back();
+    this->free_cluster_ids.pop_back();
+    this->fat_table[empty_cluster_id] = 0xffff;
+    return empty_cluster_id;
+}
+
+bool FAT16::free_cluster_chain(FAT16_ENTRY start_cluster)
+{
+    if (start_cluster < 2 || start_cluster > this->max_cluster_id)
+    {
+        return false;
+    }
+    FAT16_ENTRY free_cluster;
+    while (start_cluster != 0xffff)
+    {
+        free_cluster = start_cluster;
+        start_cluster = this->fat_table[start_cluster];
+        this->fat_table[free_cluster] = 0x0000;
+        this->free_cluster_ids.push_back(free_cluster);
+    }
+    return true;
+}
+
+bool FAT16::read_cluster(FAT16_ENTRY cluster_id, char *buffer)
+{
+    uint32_t block_id;
+    if (!this->LBA_to_PA(cluster_id, block_id))
+    {
+        return false;
+    }
+    for (uint32_t i = 0; i < this->DBR_512._BPB_.BPB_SecPerClus; ++i)
+    {
+        this->device->read_block(block_id + i, buffer + this->DBR_512._BPB_.BPB_BytsPerSec * i);
+    }
+    return true;
+}
+
+bool FAT16::write_cluster(FAT16_ENTRY cluster_id, const char *buffer)
+{
+    uint32_t block_id;
+    if (!this->LBA_to_PA(cluster_id, block_id))
+    {
+        return false;
+    }
+    for (uint32_t i = 0; i < this->DBR_512._BPB_.BPB_SecPerClus; ++i)
+    {
+        this->device->write_block(block_id + i, buffer + this->DBR_512._BPB_.BPB_BytsPerSec * i);
+    }
+    return true;
+}
+
+FAT16::FAT16_ENTRY FAT16::follow_fat_chain(FAT16_ENTRY cluster_id)
+{
+    if (cluster_id < 2 || cluster_id > this->max_cluster_id)
+    {
+        return FAT16::INVALID_FAT16_ENTRY; // 返回无效表项
+    }
+    else
+    {
+        return this->fat_table[cluster_id];
+    }
+}
+
+FAT16::FAT16_ENTRY FAT16::get_last_cluster_in_chain(FAT16_ENTRY start_cluster)
+{
+    if (start_cluster < 2 || start_cluster > this->max_cluster_id)
+    {
+        return FAT16::INVALID_FAT16_ENTRY; // 返回无效表项
+    }
+    while (this->fat_table[start_cluster] != 0xffff)
+    {
+        start_cluster = this->fat_table[start_cluster];
+    }
+    return start_cluster;
+}
+
+/********** Layer 2: 目录项操作 **********/
+
+bool FAT16::find_entry(FAT16_ENTRY dir_cluster, const std::string &name, DIR_ENTRY &entry)
+{
+    std::string _name; // 由目录项 DIR_Name 转换来的 std::string 对象
+    if (dir_cluster == FAT16::ROOT_DIR_CLUSTER)
+    {
+        for (std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin(); it != this->root_entry_table.end(); ++it)
+        {
+            this->short_name_to_string(it->DIR_Name, _name);
+            if (_name == name)
+            {
+                memcpy(&entry, &(*it), sizeof(DIR_ENTRY));
+                return true;
+            }
+        }
+        return false;
+    }
+    else
+    {
+        while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
+        {
+            if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            {
+                return false;
+            }
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+            {
+                this->short_name_to_string(it->DIR_Name, _name);
+                if (_name == name)
+                {
+                    memcpy(&entry, &(*it), sizeof(DIR_ENTRY));
+                    return true;
+                }
+            }
+            dir_cluster = this->follow_fat_chain(dir_cluster);
+        }
+        return false;
+    }
+}
+
+bool FAT16::add_entry(FAT16_ENTRY dir_cluster, const DIR_ENTRY &entry)
+{
+    if (dir_cluster == FAT16::ROOT_DIR_CLUSTER)
+    {
+        for (std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin(); it != this->root_entry_table.end(); ++it)
+        {
+            if (it->DIR_Name[0] == 0xE5)
+            {
+                memcpy(&(*it), &entry, sizeof(DIR_ENTRY));
+                return true;
+            }
+        }
+        for (std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin(); it != this->root_entry_table.end(); ++it)
+        {
+            if (it->DIR_Name[0] == 0x00)
+            {
+                memcpy(&(*it), &entry, sizeof(DIR_ENTRY));
+                return true;
+            }
+        }
+        // 根目录已满
+        return false;
+    }
+    else
+    {
+        FAT16_ENTRY prev_cluster_id; // 后面会被先赋值
+        while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
+        {
+
+            if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            {
+                return false;
+            }
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+            {
+                if (it->DIR_Name[0] == 0xE5)
+                {
+                    memcpy(&(*it), &entry, sizeof(DIR_ENTRY));
+                    if (!this->write_cluster(dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data())))
+                    {
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+            {
+                if (it->DIR_Name[0] == 0x00)
+                {
+                    memcpy(&(*it), &entry, sizeof(DIR_ENTRY));
+                    if (!this->write_cluster(dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data())))
+                    {
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            prev_cluster_id = dir_cluster;
+            dir_cluster = this->follow_fat_chain(dir_cluster);
+        }
+
+        // 子目录文件扩张
+        if (this->free_cluster_ids.empty()) // 存储空间已慢
+        {
+            return false;
+        }
+        else
+        {
+            dir_cluster = this->alloc_cluster();
+            this->fat_table[prev_cluster_id] = dir_cluster; // 构造目录文件链
+            std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [](DIR_ENTRY &de)
+                          { de.DIR_Name[0] = 0x00; });
+            memcpy(&(this->sub_dir_file[0]), &entry, sizeof(DIR_ENTRY));
+            if (!this->write_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+bool FAT16::remove_entry(FAT16_ENTRY dir_cluster, const std::string &name)
+{
+    std::string _name;
+    if (dir_cluster == FAT16::ROOT_DIR_CLUSTER)
+    {
+        for (std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin(); it != this->root_entry_table.end(); ++it)
+        {
+            this->short_name_to_string(it->DIR_Name, _name);
+            if (_name == name)
+            {
+                it->DIR_Name[0] = 0xE5;
+                return true;
+            }
+        }
+        return false;
+    }
+    else // 在这里会尝试将空子目录文件的簇回收
+    {
+        FAT16_ENTRY prev_dir_cluster = dir_cluster, curr_dir_cluster = dir_cluster;
+        while (curr_dir_cluster >= 2 && curr_dir_cluster <= this->max_cluster_id)
+        {
+            if (!this->read_cluster(curr_dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            {
+                return false;
+            }
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it) // "." 和 ".." 目录项不能删除故不需比较
+            {
+                this->short_name_to_string(it->DIR_Name, _name);
+                if (_name == name)
+                {
+                    it->DIR_Name[0] = 0xE5;
+                    for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it) // 检查目录文件是否为空，同样不检查 "." 和 ".."
+                    {
+                        if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5) // 若目录不空则直接写回并返回
+                        {
+                            this->write_cluster(curr_dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data()));
+                            return true;
+                        }
+                    }
+                    // 不允许释放目录文件首簇，首簇仍然写回
+                    if (prev_dir_cluster == curr_dir_cluster)
+                    {
+                        this->write_cluster(curr_dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data()));
+                    }
+                    else
+                    {
+                        // 已经是空子目录文件簇，直接释放掉这一簇
+                        this->fat_table[prev_dir_cluster] = this->follow_fat_chain(curr_dir_cluster); // 让前驱指向当前簇后继
+                        this->fat_table[curr_dir_cluster] = 0x0000;                                   // 释放当前簇
+                        this->free_cluster_ids.push_back(curr_dir_cluster);                           // 当前簇加入空闲簇栈
+                    }
+                    return true;
+                }
+            }
+            prev_dir_cluster = curr_dir_cluster;
+            curr_dir_cluster = this->follow_fat_chain(curr_dir_cluster);
+        }
+        return false;
+    }
+}
+
+std::vector<FAT16::DIR_ENTRY> FAT16::list_entries(FAT16_ENTRY dir_cluster)
+{
+    std::vector<DIR_ENTRY> list;
+    list.clear();
+    if (dir_cluster == FAT16::ROOT_DIR_CLUSTER)
+    {
+        for (std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin(); it != this->root_entry_table.end(); ++it)
+        {
+            if (it->DIR_Name[0] != 0xE5 && it->DIR_Name[0] != 0x00)
+            {
+                list.push_back(*it);
+            }
+        }
+        return list;
+    }
+    else
+    {
+        while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
+        {
+            if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+            {
+                return list;
+            }
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+            {
+                if (it->DIR_Name[0] != 0xE5 && it->DIR_Name[0] != 0x00)
+                {
+                    list.push_back(*it);
+                }
+            }
+            dir_cluster = this->follow_fat_chain(dir_cluster);
+        }
+        return list;
+    }
+}
+
+/********** Layer 3: 路径解析 **********/
+
+std::string FAT16::assist_normalize(const std::string &path) const
+{
+    std::string normalized_path = path;
+    std::string::iterator it = std::unique(normalized_path.begin(), normalized_path.end(), [](char a, char b)
+                                           { return a == '/' && b == '/'; });
+    normalized_path.erase(it, normalized_path.end());
+    std::for_each(normalized_path.begin(), normalized_path.end(), [](char &ch)
+                  { ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); });
+    return normalized_path;
+}
+
+bool FAT16::validation_name(const std::string &name) const
+{
+    if (name.empty() || name.find_first_of(" \"*/\\:<>?|") != std::string::npos || name.size() > 12)
+    {
+        return false;
+    }
+    size_t dot_pos = name.find_first_of('.');
+    if (dot_pos != std::string::npos && name != "." && name != "..")
+    {
+        if (name.find('.', dot_pos + 1) != std::string::npos) // 不允许多个不连续 '.'
+        {
+            return false;
+        }
+        else
+        {
+            // 若含有 '.'，即 dot_pos <= 8，则条件为 !(名字长度小于等于8且拓展名小于等于3) 则名字不合法
+            if (!(dot_pos <= 8 && name.size() - dot_pos - 1 <= 3))
+            {
+                return false;
+            }
+        }
+    }
+    else if (name.size() > 8) // 无 '.' 即无拓展名时文件名最长不超过8
+    {
+        return false;
+    }
+    return true;
+}
+
+bool FAT16::path_normalizer(const std::string &path, std::string &normalized_path) const
+{
+    normalized_path = this->assist_normalize(path);
+    if (normalized_path.find('/') == std::string::npos) // 无 '/' 单名字 token
+    {
+        return this->validation_name(normalized_path);
+    }
+    size_t start = 0, end = 0;
+    while ((end = normalized_path.find('/', start)) != std::string::npos)
+    {
+        if (end - start > 0)
+        {
+            if (!this->validation_name(normalized_path.substr(start, end - start)))
+            {
+                return false;
+            }
+        }
+        start = end + 1;
+    }
+    if (start != normalized_path.size()) // 检查最后一个无 '/' 结尾的 token
+    {
+        return this->validation_name(normalized_path.substr(start, normalized_path.size()));
+    }
+    return true;
+}
+
+bool FAT16::path_simplify(const std::string &normalized_path, std::string &simplified_path) const
+{
+    std::vector<std::string> tokens;
+    tokens.clear();
+    size_t start = 0, end = 0;
+    if (normalized_path.find('/') == std::string::npos) // 单名字无任何 '/'
+    {
+        simplified_path = normalized_path;
+        return true;
+    }
+    while ((end = normalized_path.find('/', start)) != std::string::npos) // 这个 while 条件无法加入 "/" 根目录
+    {
+        if (end - start > 0)
+        {
+            tokens.push_back(normalized_path.substr(start, end - start));
+            if (tokens.back() == ".")
+            {
+                tokens.pop_back();
+            }
+            else if (tokens.back() == "..")
+            {
+                if (tokens.size() >= 2) // POSIX 语义认为 "/.." 等能解析到根目录的父目录为 "/" 即根目录
+                {
+                    tokens.pop_back();
+                }
+                tokens.pop_back();
+            }
+        }
+        start = end + 1;
+    }
+    if (start != normalized_path.size())
+    {
+        tokens.push_back(normalized_path.substr(start, normalized_path.size()));
+        if (tokens.back() == ".")
+        {
+            tokens.pop_back();
+        }
+        else if (tokens.back() == "..")
+        {
+            if (tokens.size() >= 2) // POSIX 语义认为 "/.." 等能解析到根目录的父目录为 "/" 即根目录
+            {
+                tokens.pop_back();
+            }
+
+            tokens.pop_back();
+        }
+    }
+    simplified_path.clear();
+    std::for_each(tokens.begin(), tokens.end(), [&simplified_path](std::string &token) // 由于 tokens 不含 "/" 根目录，所以下一 if 语句特殊处理化简路径为 "/" 根目录的简化路径
+                  { simplified_path += "/"; simplified_path += token; });
+    if (simplified_path.empty())
+    {
+        simplified_path = "/";
+    }
+    return true;
+}
+
+bool FAT16::resolve_path(const std::string &normalized_path, PATH_RESULT &result)
+{
+    // 转为绝对路径
+    std::string complete_normalized_path = normalized_path[0] == '/' ? normalized_path : this->pwd + normalized_path;
+    // 简化绝对路径
+    std::string simplified_path;
+    if (!this->path_simplify(complete_normalized_path, simplified_path))
+    {
+        // path_simplify 有输出
+        return false;
+    }
+    // 预处理为绝对路径名的一系列文件名 token，注意不包含根目录
+    std::vector<std::string> tokens;
+    tokens.clear();
+    if (simplified_path.find('/') == std::string::npos)
+    {
+        tokens.push_back(simplified_path);
+    }
+    size_t start = 0, end = 0;
+    while ((end = simplified_path.find('/', start)) != std::string::npos)
+    {
+        if (end - start > 0) // 不将空串加入 tokens，并且不会加入根目录
+        {
+            tokens.push_back(simplified_path.substr(start, end - start));
+        }
+        start = end + 1;
+    }
+    if (start != simplified_path.size() && simplified_path != "/") // 路径最后一级如无 '/' 也要加入 tokens
+    {
+        tokens.push_back(simplified_path.substr(start, simplified_path.size()));
+    }
+
+    // 首先找到起始簇号与相应前驱簇号，第一个 token 是没有在 tokens 中的 "/" 根目录
+    DIR_ENTRY temp_dir_ent;
+    memset(&temp_dir_ent, 0, sizeof(DIR_ENTRY));
+    FAT16_ENTRY par_cluster_id = FAT16::ROOT_DIR_CLUSTER;
+    FAT16_ENTRY save_par_cluster_id = FAT16::ROOT_DIR_CLUSTER; // 记录父目录簇
+
+    // 定位文件，按名查找
+    for (std::vector<std::string>::iterator it = tokens.begin(); it != tokens.end(); ++it)
+    {
+        bool finded = this->find_entry(par_cluster_id, *it, temp_dir_ent);
+        if (!finded && it == tokens.end() - 1) // 只有最后一级无法解析
+        {
+            result.parent_dir_cluster = par_cluster_id;
+            result.parent_filename = it == tokens.begin() ? "/" : *it;
+            result.exists = false;
+            return true;
+        }
+        else if (!finded)
+        {
+            return false;
+        }
+        else
+        {
+            // 进入下一个 token 前保存当前簇（即下一级的父目录）
+            save_par_cluster_id = par_cluster_id;
+            par_cluster_id = temp_dir_ent.DIR_FstClusLO;
+        }
+    }
+    if (tokens.empty()) // 这表明解析结果是根目录
+    {
+        result.parent_dir_cluster = FAT16::INVALID_FAT16_ENTRY; // 根目录没有父目录所以父目录簇号为无效值
+        result.parent_filename = "";                            // 根目录没有父目录所以父目录名称为空
+        memset(&result.entry, 0, sizeof(DIR_ENTRY));            // 根目录没有 entry
+        result.entry.DIR_FstClusLO = FAT16::ROOT_DIR_CLUSTER;   // 根目录的约定簇号有意义故仍然设置，增加上级调用判断的方式
+        result.entry.DIR_Attr = 0x10;
+    }
+    else
+    {
+        result.parent_dir_cluster = save_par_cluster_id; // 使用父目录簇，而非文件自身簇
+        result.parent_filename = tokens.back();          // token 生成过程使得每个名称都不会含有 '/'，名称后的 '/' 合法性由上层语义层判断
+        memcpy(&(result.entry), &temp_dir_ent, sizeof(DIR_ENTRY));
+    }
+    result.exists = true;
+    return true;
+}
+
+/********** 辅助函数 **********/
+
+uint32_t FAT16::get_total_clusters() const
+{
+    //  获取总扇区数
+    uint32_t total_sectors = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_TotSec16) > 0 ? static_cast<uint32_t>(this->DBR_512._BPB_.BPB_TotSec16) : static_cast<uint32_t>(this->DBR_512._BPB_.BPB_TotSec32);
+    //  计算根目录所占扇区
+    uint32_t total_root_ent_sectors = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_RootEntCnt) * 32 /
+                                      static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec);
+    // 计算总数据/子目录扇区数
+    uint32_t total_data_sectors = total_sectors -
+                                  this->DBR_512._BPB_.BPB_RsvdSecCnt -
+                                  static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_NumFATs) -
+                                  total_root_ent_sectors;
+    //  计算返回总簇数
+    return total_data_sectors / this->DBR_512._BPB_.BPB_SecPerClus;
+}
+
+bool FAT16::LBA_to_PA(uint32_t cluster_id, uint32_t &block_id) const
+{
+    //  簇号范围：[2, MAX] ，在FAT16下，MAX = 总簇数 + 1
+    if (cluster_id < 2 || cluster_id > this->get_total_clusters() + 1)
+    {
+        return false;
+    }
+    else
+    {
+        //  计算首簇的物理地址
+        uint32_t first_cluster_block_id = this->DBR_512._BPB_.BPB_RsvdSecCnt +
+                                          this->DBR_512._BPB_.BPB_NumFATs * this->DBR_512._BPB_.BPB_FATSz16 +
+                                          this->DBR_512._BPB_.BPB_RootEntCnt * 32 / this->DBR_512._BPB_.BPB_BytsPerSec;
+        block_id = first_cluster_block_id + (cluster_id - 2) * this->DBR_512._BPB_.BPB_SecPerClus; //  套用公式获得簇物理地址
+        return true;
+    }
+}
+
+void FAT16::short_name_to_string(const uint8_t *DIR_Name, std::string &name)
+{
+    // 处理空闲/已删除/无效目录项（由上层维护，无效目录项不会传入到此）
+    if (DIR_Name[0] == 0x00 || DIR_Name[0] == 0xE5)
+    {
+        name = "";
+        return;
+    }
+    std::string _name, _ext;
+    _name.clear();
+    _ext.clear();
+    size_t i = 0;
+    for (; i < 8 && DIR_Name[i] != ' '; ++i)
+    {
+        _name += DIR_Name[i];
+    }
+    while (DIR_Name[i] == ' ' && i < 11)
+    {
+        ++i;
+    }
+    for (; i < 11 && DIR_Name[i] != ' '; ++i)
+    {
+        _ext += DIR_Name[i];
+    }
+    name = _ext.empty() ? _name : (_name + '.' + _ext);
+}
+
+void FAT16::validation_fat16(const std::string &disk_img)
+{
 
     // 检验每个扇区的字节数的合法性
     uint16_t BPS = this->DBR_512._BPB_.BPB_BytsPerSec;
@@ -31,15 +1330,6 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
                   << this->DBR_512._BPB_.BPB_RsvdSecCnt << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
-
-    //  检验根目录中的条目数    无用代码注释掉
-    // if (32 * this->DBR_512._BPB_.BPB_RootEntCnt % 2 != 0)
-    //{
-    //    std::cerr << "Invalid disk image \"" << disk_img
-    //              << "\": BPB_RootEntCnt = "
-    //              << this->DBR_512._BPB_.BPB_RootEntCnt << "\nAbort.\n";
-    //    exit(EXIT_FAILURE);
-    //}
 
     //  检验16位长度卷的总扇区数和32位长度卷的总扇区数
     uint32_t TS16 = this->DBR_512._BPB_.BPB_TotSec16,
@@ -117,9 +1407,20 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     // 检验空余（大于512字节）
     if (this->DBR_512._BPB_.BPB_BytsPerSec > 512)
     {
+        std::ifstream disk_in(disk_img, std::ios_base::binary | std::ios_base::in);
+        if (!disk_in.is_open())
+        {
+            std::cerr << "Cannot open disk image \"" << disk_img
+                      << "\"\nAbort.\n";
+            exit(EXIT_FAILURE);
+        }
+
         int16_t rest_zero_bytes = this->DBR_512._BPB_.BPB_BytsPerSec - 512;
         std::vector<uint8_t> datas(rest_zero_bytes);
+        disk_in.seekg(512, std::ios::beg);
         disk_in.read(reinterpret_cast<char *>(datas.data()), rest_zero_bytes);
+        disk_in.close();
+
         for (int16_t i = 0; i < rest_zero_bytes; ++i)
         {
             if (datas[i] != 0)
@@ -130,12 +1431,6 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
             }
         }
     }
-
-    //  构造FAT表
-    uint32_t fat16_table_bytes = static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec);
-    this->fat_table.resize(fat16_table_bytes / sizeof(FAT16_ENTRY));
-    disk_in.read(reinterpret_cast<char *>(this->fat_table.data()), fat16_table_bytes);
-    disk_in.seekg(static_cast<uint32_t>(this->DBR_512._BPB_.BPB_FATSz16) * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_BytsPerSec), std::ios::cur); //  忽略冗余FAT
 
     //  FAT[0]检验
     int16_t sign_ext_media = static_cast<int8_t>(this->DBR_512._BPB_.BPB_Media);
@@ -161,11 +1456,6 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
                   << total_clus << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
-
-    //  构造根目录表
-    uint32_t root_table_bytes = 32 * static_cast<uint32_t>(this->DBR_512._BPB_.BPB_RootEntCnt);
-    this->root_entry_table.resize(this->DBR_512._BPB_.BPB_RootEntCnt);
-    disk_in.read(reinterpret_cast<char *>(this->root_entry_table.data()), root_table_bytes);
 
     //  检测根目录中卷标文件与 DBR 中卷标的一致性（严格检测）
     if (this->DBR_512._BS_END_.BS_BootSig == 0x29)
@@ -201,347 +1491,36 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
             }
         }
     }
-
-    std::cout << "Disk meta data all check clear.\n"
-              << "FAT table constructed.\n"
-              << "Root directory constructed.\n";
-
-    //  关闭文件流
-    disk_in.close();
-
-    //  初始当前路径为根目录 /
-    this->pwd = "/";
-
-    //  依据DBR数据构造块设备
-    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ? this->DBR_512._BPB_.BPB_TotSec16 : this->DBR_512._BPB_.BPB_TotSec32;
-    this->device.reset(new FileBackedBlockDevice(disk_img, this->DBR_512._BPB_.BPB_BytsPerSec, total_sectors));
-
-    // 检测FAT[1]并置为0x0
-    if (this->fat_table[1] != 0xffff)
-    {
-        std::cout << "CAUTION: \"" << disk_img
-                  << "\" was detected as not being properly removed last time!\n";
-    }
-    this->fat_table[1] = 0;
-
-    std::cout << "\"" << disk_img << "\" has mounted.\n";
 }
 
-FAT16::~FAT16()
+void FAT16::get_splited_dir_name(const std::string &normalized_path, std::string &_name, std::string &_ext) const
 {
-    if (this->device)
+    size_t name_start = normalized_path.find_last_of('/');
+    size_t last_dot = normalized_path.find_last_of('.');
+    if (name_start == std::string::npos) // 无 '/'
     {
-        this->device->flush_to_file();
-    }
-    this->fat_table[1] = 0xffff;
-    // 还未完善，需要将 FAT16 的元数据写回镜像文件
-
-    std::cout << "\"" << this->disk_name << "\" unmonted.\n";
-}
-
-bool FAT16::export_file(const std::string &src_file_path, const std::string &dest_file_path)
-{
-    //  清空宿主机文件的数据内容为文件导出作准备
-    std::fstream fout(dest_file_path, std::ios_base::binary | std::ios_base::out);
-    if (!fout.is_open())
-    {
-        std::cerr << "\"" << dest_file_path << "\" create failed!\n";
-        return false;
-    }
-
-    // 目前不实现多级目录，略去解析路径定位子目录，核心是实现FCB分配回收与簇分配回收功能
-    // 目前仅支持短文件名
-
-    std::string filename = src_file_path;
-    std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin();
-    for (; it != this->root_entry_table.end(); ++it)
-    {
-        //  依照目录项构造8.3格式文件名并改造为std::string
-        std::string dir_filename;
-        this->short_file_name_to_string(it->DIR_Name, dir_filename);
-
-        //  按名查找
-        if (dir_filename == filename)
+        if (last_dot == std::string::npos) // 无 '.'
         {
-            break;
+            _name = normalized_path; // 所以 DIR_Name 的 std::string 就是这个，如 normalized_path = "DIR1"
+            _ext = "";
+        }
+        else // 有 '.'，如 normalized_path = "a.bc"
+        {
+            _name = normalized_path.substr(0, last_dot);
+            _ext = normalized_path.substr(last_dot + 1, normalized_path.size() - last_dot - 1);
         }
     }
-    if (it == this->root_entry_table.end())
+    else // 有 '/' 的路径，即如 normalized_path = "/DIR1/DIR2" 或 normalized_path = "DIR1/DIR2.XX"
     {
-        std::cerr << "\"" << src_file_path << "\" does not exsit\n";
-        return false;
-    }
-    else
-    {
-        uint16_t cluster_id = it->DIR_FstClusLO;     //    FAT16只有 DIR_FstClusLO 有用
-        uint32_t remaining_bytes = it->DIR_FileSize; //    还剩多少字节要导出
-        uint32_t block_id;
-        std::vector<uint8_t> data_block(this->DBR_512._BPB_.BPB_BytsPerSec);
-
-        while (cluster_id != 0xFFFF && remaining_bytes > 0) //    簇号有效且还有数据要导出
+        if (last_dot == std::string::npos || last_dot < name_start) // 完全没有 '.' 或者 '.' 在最后一个文件名称 token （路径最后一级）之前
         {
-            if (this->LBA_to_PA(cluster_id, block_id))
-            {
-                //  读取当前簇中的所有扇区，直到数据写完
-                for (uint32_t i = 0; i < this->DBR_512._BPB_.BPB_SecPerClus && remaining_bytes > 0; ++i)
-                {
-                    this->device->read_block(block_id + i, reinterpret_cast<char *>(data_block.data()));
-                    uint32_t to_write = remaining_bytes < this->DBR_512._BPB_.BPB_BytsPerSec ? remaining_bytes : this->DBR_512._BPB_.BPB_BytsPerSec;
-                    fout.write(reinterpret_cast<char *>(data_block.data()), to_write);
-                    remaining_bytes -= to_write;
-                }
-
-                cluster_id = this->fat_table[cluster_id]; //  沿FAT链跳到下一簇
-            }
-            else
-            {
-                std::cerr << "Invalid cluster_id = " << cluster_id << ", export failed.\n";
-                return false;
-            }
+            _name = normalized_path.substr(name_start + 1, normalized_path.size() - name_start - 1);
+            _ext = "";
         }
-
-        fout.close();
-        std::cout << "Export success!\n";
-        return true;
-    }
-}
-
-bool FAT16::load_file(const std::string &src_file_path, const std::string &dest_file_path)
-{
-    //  打开宿主机源文件为导入作准备
-    std::fstream fin(src_file_path, std::ios_base::binary | std::ios_base::in);
-    if (!fin.is_open())
-    {
-        std::cerr << "\"" << src_file_path << "\" open failed!\n";
-        return false;
-    }
-
-    //  计算文件大小
-    fin.seekg(0, std::ios::end);
-    uint64_t file_size = fin.tellg();
-    fin.clear();
-    fin.seekg(0, std::ios::beg);
-    uint32_t cluster_size = this->DBR_512._BPB_.BPB_BytsPerSec * this->DBR_512._BPB_.BPB_SecPerClus;
-    uint32_t clusters_need = (file_size + cluster_size - 1) / cluster_size;
-
-    //  检查可用簇，并且可以直接拒绝超出文件系统限制的最大文件限制的文件
-    uint64_t free_clusters = 0;
-    std::for_each(this->fat_table.begin(), this->fat_table.end(), [&free_clusters](FAT16_ENTRY &a)
-                  { if (a == 0x0000) ++free_clusters; });
-    if (clusters_need >= free_clusters)
-    {
-        std::cerr << "Insufficient image capacity! File is too big!\n";
-        return false;
-    }
-
-    //  目前不实现多级目录，略去解析路径定位子目录，核心是实现FCB分配回收与簇分配回收功能
-    //  目前仅支持短文件名
-    std::string filename = dest_file_path;
-
-    //  先检查是否有无重名文件
-    for (std::vector<DIR_ENTRY>::iterator it = this->root_entry_table.begin(); it != this->root_entry_table.end(); ++it)
-    {
-        std::string exist_filename;
-        this->short_file_name_to_string(it->DIR_Name, exist_filename);
-        if (exist_filename == filename)
+        else // 否则路径最后一级是具有 '.' 分割开来的 _name + '.' + _ext 形式
         {
-            std::cerr << "file \"" << dest_file_path << "\" has already existed!\n";
-            return false;
+            _name = normalized_path.substr(name_start + 1, last_dot - name_start - 1);
+            _ext = normalized_path.substr(last_dot + 1, normalized_path.size() - last_dot - 1);
         }
-    }
-
-    //  查找可用 PCB
-    //  先查找被删除文件留下的目录项
-    std::vector<DIR_ENTRY>::iterator free_ent_it = this->root_entry_table.begin() + 2;
-    for (; free_ent_it != this->root_entry_table.end(); ++free_ent_it)
-    {
-        if (free_ent_it->DIR_Name[0] == 0xE5)
-        {
-            break;
-        }
-    }
-    //  否则查找空闲目录项
-    if (free_ent_it == this->root_entry_table.end())
-    {
-        free_ent_it = this->root_entry_table.begin();
-        for (; free_ent_it != this->root_entry_table.end(); ++free_ent_it)
-        {
-            if (free_ent_it->DIR_Name[0] == 0x00)
-            {
-                break;
-            }
-        }
-    }
-
-    //  无可用 FCB
-    if (free_ent_it == this->root_entry_table.end())
-    {
-        std::cerr << "No free FCB!\n";
-        return false;
-    }
-
-    //  填写文件元数据
-    this->string_to_short_file_name(filename, free_ent_it->DIR_Name); //  填写8.3格式短文件名
-    free_ent_it->DIR_Attr = 0x00;                                     //  填写文件属性
-    free_ent_it->DIR_NTRes = 0x00;                                    //  保留位强制置0
-    //  暂时忽略文件创建时间，单位为10ms
-    //  暂时忽略文件创建时间
-    //  暂时忽略文件创建日期
-    //  暂时忽略文件最近访问日期
-    free_ent_it->DIR_FstClusHI = 0x0000; //  首簇簇号高16位在 FAT16 中始终为0
-    //  暂时忽略文件修改时间
-    //  暂时忽略文件修改日期
-    free_ent_it->DIR_FileSize = file_size; //  先填写文件大小，单位为字节
-
-    //  构造镜像文件数据
-    // 查找第一个空闲簇
-    uint32_t cluster_id = 2;
-    for (; cluster_id <= this->get_total_clusters() + 1; ++cluster_id)
-    {
-        if (this->fat_table[cluster_id] == 0x0000)
-        {
-            break;
-        }
-    }
-    if (cluster_id < 2 || cluster_id > this->get_total_clusters() + 1)
-    {
-        std::cerr << "FAT table error!\n";
-        return false;
-    }
-    free_ent_it->DIR_FstClusLO = static_cast<uint16_t>(cluster_id); //  填写首簇簇号低16位，至此文件元数据填写完毕
-
-    //  以下代码开始进行文件数据导入工作
-    uint32_t remaining_bytes = free_ent_it->DIR_FileSize;
-    uint32_t block_id;
-    std::vector<uint8_t> data_block(this->DBR_512._BPB_.BPB_BytsPerSec);
-    while (remaining_bytes > 0)
-    {
-        if (this->LBA_to_PA(cluster_id, block_id))
-        {
-            //  写入当前簇中的所有扇区，直到数据读完
-            for (uint32_t i = 0; i < this->DBR_512._BPB_.BPB_SecPerClus && remaining_bytes > 0; ++i)
-            {
-                uint32_t to_read = remaining_bytes < this->DBR_512._BPB_.BPB_BytsPerSec ? remaining_bytes : this->DBR_512._BPB_.BPB_BytsPerSec;
-                fin.read(reinterpret_cast<char *>(data_block.data()), to_read);
-                this->device->write_block(block_id + i, reinterpret_cast<char *>(data_block.data()));
-                remaining_bytes -= to_read;
-            }
-
-            //  找到下一个空闲簇
-            if (remaining_bytes > 0)
-            {
-                uint32_t new_cluster_id = cluster_id + 1;
-                for (; new_cluster_id <= this->get_total_clusters() + 1; ++new_cluster_id)
-                {
-                    if (this->fat_table[new_cluster_id] == 0x0000)
-                    {
-                        this->fat_table[cluster_id] = static_cast<uint16_t>(new_cluster_id); //  构造文件簇链
-                        cluster_id = new_cluster_id;
-                        break;
-                    }
-                }
-
-                if (new_cluster_id < 2 || new_cluster_id > this->get_total_clusters() + 1)
-                {
-                    std::cerr << "FAT table error!\n";
-                    return false;
-                }
-            }
-            else //  若已经读入所有数据，则添加终止标记
-            {
-                this->fat_table[cluster_id] = 0xffff;
-            }
-        }
-        else
-        {
-            std::cerr << "Invalid cluster_id = " << cluster_id << ", load failed.\n";
-            return false;
-        }
-    }
-
-    fin.close();
-    std::cout << "Load success!\n";
-    return true;
-}
-
-bool FAT16::short_file_name_to_string(const uint8_t *dir_name, std::string &filename)
-{
-    std::string name(reinterpret_cast<const char *>(dir_name), 8);
-    name.erase(name.find_last_not_of(' ') + 1);
-    std::string ext(reinterpret_cast<const char *>(dir_name + 8), 3);
-    ext.erase(ext.find_last_not_of(' ') + 1);
-    filename = name;
-    if (!ext.empty())
-    {
-        filename += '.';
-        filename += ext;
-    }
-    return true;
-}
-
-bool FAT16::string_to_short_file_name(const std::string &filename, uint8_t *dir_name)
-{
-    if (filename.size() > 12)
-    {
-        return false;
-    }
-
-    memset(dir_name, ' ', 11);
-
-    size_t dot_pos = 0;
-    for (; dot_pos < filename.size(); ++dot_pos)
-    {
-        if (filename[dot_pos] == '.')
-        {
-            break;
-        }
-    }
-    if (dot_pos >= filename.size())
-    {
-        return false;
-    }
-    for (size_t i = 0; i < dot_pos; ++i)
-    {
-        dir_name[i] = filename[i];
-    }
-    for (size_t i = dot_pos + 1; i < filename.size(); ++i)
-    {
-        dir_name[i - dot_pos - 1 + 8] = filename[i];
-    }
-
-    return true;
-}
-
-uint32_t FAT16::get_total_clusters() const
-{
-    //  获取总扇区数
-    uint32_t total_sectors = this->DBR_512._BPB_.BPB_TotSec16 > 0 ? this->DBR_512._BPB_.BPB_TotSec16 : this->DBR_512._BPB_.BPB_TotSec32;
-    //  计算根目录所占扇区
-    uint32_t total_root_ent_sectors = this->DBR_512._BPB_.BPB_RootEntCnt * 32 /
-                                      this->DBR_512._BPB_.BPB_BytsPerSec;
-    // 计算总数据/子目录扇区数
-    uint32_t total_data_sectors = total_sectors -
-                                  this->DBR_512._BPB_.BPB_RsvdSecCnt -
-                                  this->DBR_512._BPB_.BPB_FATSz16 * this->DBR_512._BPB_.BPB_NumFATs -
-                                  total_root_ent_sectors;
-    //  计算返回总簇数
-    return total_data_sectors / this->DBR_512._BPB_.BPB_SecPerClus;
-}
-
-bool FAT16::LBA_to_PA(uint32_t cluster_id, uint32_t &block_id) const
-{
-    //  簇号范围：[2, MAX] ，在FAT16下，MAX = 总簇数 + 1
-    if (cluster_id < 2 || cluster_id > this->get_total_clusters() + 1)
-    {
-        return false;
-    }
-    else
-    {
-        //  计算首簇的物理地址
-        uint32_t first_cluster_block_id = this->DBR_512._BPB_.BPB_RsvdSecCnt +
-                                          this->DBR_512._BPB_.BPB_NumFATs * this->DBR_512._BPB_.BPB_FATSz16 +
-                                          this->DBR_512._BPB_.BPB_RootEntCnt * 32 / this->DBR_512._BPB_.BPB_BytsPerSec;
-        block_id = first_cluster_block_id + (cluster_id - 2) * this->DBR_512._BPB_.BPB_SecPerClus; //  套用公式获得簇物理地址
-        return true;
     }
 }

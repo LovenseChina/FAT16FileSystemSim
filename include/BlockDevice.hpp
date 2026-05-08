@@ -52,7 +52,7 @@ public:
     virtual bool write_block(uint32_t block_id, const char * buffer) = 0;
 
     /**
-     * @brief 将所有脏数据强制同步到文件中
+     * @brief 将所有 std::fstream 缓冲中数据强制同步到文件中
      */
     virtual void flush_to_file() = 0;
 protected:
@@ -72,7 +72,7 @@ public:
      * @brief 构造文件块设备
      * @param filename 磁盘镜像文件路径
      * @param block_size 块大小
-     * @param total_blocks 总块数（如果文件不存在则按此创建；存在则自动适配）
+     * @param total_blocks 总块数（自动适配）
      */
     FileBackedBlockDevice(const std::string &filename,
                           uint32_t block_size,
@@ -106,7 +106,7 @@ public:
     virtual bool write_block(uint32_t block_id, const char * buffer);
     
     /**
-     * @brief 将所有 脏 数据强制同步到文件中
+     * @brief 将所有 std::fstream 缓冲中数据强制同步到文件中
      */
     virtual void flush_to_file();
 
