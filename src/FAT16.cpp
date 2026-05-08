@@ -601,7 +601,7 @@ bool FAT16::export_file(const std::string &src_path, const std::string &dest_pat
         std::cerr << "Error: file export failed!\n";
         return false;
     }
-    std::fstream fout(dest_path, std::ios_base::binary | std::ios_base::out);   // 注意输出文件被自动截断大小为0
+    std::fstream fout(dest_path, std::ios_base::binary | std::ios_base::out); // 注意输出文件被自动截断大小为0
     if (!fout.is_open())
     {
         std::cerr << "Error: Cannot create \"" << dest_path << "\"\n";
@@ -612,7 +612,7 @@ bool FAT16::export_file(const std::string &src_path, const std::string &dest_pat
 }
 
 bool FAT16::load_file(const std::string &src_path, const std::string &dest_path)
-{   
+{
     std::fstream fin(src_path, std::ios_base::binary | std::ios_base::in);
     if (!fin.is_open())
     {
@@ -865,7 +865,7 @@ bool FAT16::remove_entry(FAT16_ENTRY dir_cluster, const std::string &name)
         }
         return false;
     }
-    else    // 在这里会尝试将空子目录文件的簇回收
+    else // 在这里会尝试将空子目录文件的簇回收
     {
         FAT16_ENTRY prev_dir_cluster = dir_cluster, curr_dir_cluster = dir_cluster;
         while (curr_dir_cluster >= 2 && curr_dir_cluster <= this->max_cluster_id)
@@ -874,15 +874,15 @@ bool FAT16::remove_entry(FAT16_ENTRY dir_cluster, const std::string &name)
             {
                 return false;
             }
-            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // "." 和 ".." 目录项不能删除故不需比较
+            for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it) // "." 和 ".." 目录项不能删除故不需比较
             {
                 this->short_name_to_string(it->DIR_Name, _name);
                 if (_name == name)
                 {
                     it->DIR_Name[0] = 0xE5;
-                    for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it)    // 检查目录文件是否为空，同样不检查 "." 和 ".."
+                    for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin() + 2; it != this->sub_dir_file.end(); ++it) // 检查目录文件是否为空，同样不检查 "." 和 ".."
                     {
-                        if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5)    // 若目录不空则直接写回并返回
+                        if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5) // 若目录不空则直接写回并返回
                         {
                             this->write_cluster(curr_dir_cluster, reinterpret_cast<const char *>(this->sub_dir_file.data()));
                             return true;
@@ -896,8 +896,8 @@ bool FAT16::remove_entry(FAT16_ENTRY dir_cluster, const std::string &name)
                     else
                     {
                         // 已经是空子目录文件簇，直接释放掉这一簇
-                        this->fat_table[prev_dir_cluster] = this->follow_fat_chain(curr_dir_cluster);   // 让前驱指向当前簇后继
-                        this->fat_table[curr_dir_cluster] = 0x0000; // 释放当前簇
+                        this->fat_table[prev_dir_cluster] = this->follow_fat_chain(curr_dir_cluster); // 让前驱指向当前簇后继
+                        this->fat_table[curr_dir_cluster] = 0x0000;                                   // 释放当前簇
                     }
                     return true;
                 }

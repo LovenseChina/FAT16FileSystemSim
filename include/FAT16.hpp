@@ -140,7 +140,7 @@ public:
     bool load_file(const std::string &src_path, const std::string &dest_path);
 
 public:
-//private: 暂时设置为公有便于调试
+    // private: 暂时设置为公有便于调试
     /********** Layer 1: 簇操作 **********/
 
     // === 簇分配与回收 ===
@@ -195,7 +195,7 @@ public:
     struct PATH_RESULT
     {
         FAT16_ENTRY parent_dir_cluster; // 父目录的簇号（根目录为 0x0000 特殊标记）
-        std::string parent_filename;          // 文件名的 8.3 格式的最后一级名称
+        std::string parent_filename;    // 文件名的 8.3 格式的最后一级名称
         DIR_ENTRY entry;                // 找到的目录项（如果存在）
         bool exists;                    // 目录项是否存在
     };
@@ -211,7 +211,7 @@ public:
     bool path_normalizer(const std::string &path, std::string &normalized_path) const;
 
     /**
-     * @brief 
+     * @brief
      * 对完整规范路径进行简化
      * @param normalized_path 完整规范化路径
      * @param simplified_path 返回的简化路径
