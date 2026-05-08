@@ -72,7 +72,7 @@ public:
      * @brief 构造文件块设备
      * @param filename 磁盘镜像文件路径
      * @param block_size 块大小
-     * @param total_blocks 总块数（如果文件不存在则按此创建；存在则自动适配）
+     * @param total_blocks 总块数（自动适配）
      */
     FileBackedBlockDevice(const std::string &filename,
                           uint32_t block_size,

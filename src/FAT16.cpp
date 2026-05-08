@@ -481,7 +481,7 @@ bool FAT16::remove_dir(const std::string &path)
 
     // 当前目录判空，不删根目录
     FAT16_ENTRY dir_cluster = path_result_info.entry.DIR_FstClusLO;
-    while (dir_cluster >= 2 || dir_cluster <= this->max_cluster_id)
+    while (dir_cluster >= 2 && dir_cluster <= this->max_cluster_id)
     {
         if (!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
         {
@@ -591,7 +591,7 @@ bool FAT16::change_dir(const std::string &path)
                   << "path: " << normalized_path << "\n";
         return false;
     }
-    if (!path_result_info.exists || !path_result_info.entry.DIR_Attr == 0x10)
+    if (!path_result_info.exists || !(path_result_info.entry.DIR_Attr & 0x10))
     {
         std::cerr << "Error: Path does not exist!\n"
                   << "path: " << normalized_path << "\n";
@@ -641,6 +641,7 @@ bool FAT16::change_dir(const std::string &path)
                       { this->pwd += '/'; this->pwd += token; });
         this->pwd += '/';   // this->pwd 总以 '/' 结尾！
     }
+    return true;
 }
 
 bool FAT16::export_file(const std::string &src_path, const std::string &dest_path)
@@ -698,7 +699,6 @@ void FAT16::sync()
     if (this->device)
     {
         this->fat_table[1] = 0xffff; // 认为 sync 后就可以安全移除镜像
-        this->device->flush_to_file();
         // 写入 FAT 表
         uint32_t sector_id = this->DBR_512._BPB_.BPB_RsvdSecCnt;
         uint32_t fat_size = this->DBR_512._BPB_.BPB_FATSz16;
@@ -707,7 +707,7 @@ void FAT16::sync()
         {
             for (uint32_t j = 0; j < fat_size; ++j)
             {
-                this->device->write_block(sector_id + j * i + j, reinterpret_cast<const char *>(this->fat_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * (j * i + j));
+                this->device->write_block(sector_id + i * fat_size + j, reinterpret_cast<const char *>(this->fat_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * j);
             }
         }
         // 写入根目录
@@ -717,6 +717,7 @@ void FAT16::sync()
         {
             this->device->write_block(sector_id + i, reinterpret_cast<const char *>(this->root_entry_table.data()) + this->DBR_512._BPB_.BPB_BytsPerSec * i);
         }
+        this->device->flush_to_file();
 
         std::cout << "Data of image has flush to file.\n";
     }
