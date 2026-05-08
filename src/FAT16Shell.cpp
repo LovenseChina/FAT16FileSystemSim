@@ -1,3 +1,14 @@
+/**
+ * @file FAT16Shell.cpp
+ * @author deepseek v4
+ * @brief 
+ * 这个简易壳是由deepseek 生成的，主要这个写起来没啥意思
+ * @version 1.0
+ * @date 2026-05-08
+ * 
+ * @copyright Copyright (c) 2026
+ * 
+ */
 #include "../include/FAT16.hpp"
 #include <iostream>
 #include <sstream>

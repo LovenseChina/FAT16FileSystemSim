@@ -1,3 +1,18 @@
+/**
+ * @file FAT16.cpp
+ * @author Tang Jun-Chi (chinatrq@outlook.com)
+ * 部分 code review 由我本人完成，部分是 deepseek 与我共同完成
+ * @brief 
+ * FAT16 的一个简易模拟器实现
+ * 如果想读取其它软件产生的 FAT16 超级软盘格式镜像文件
+ * 可以手动修改代码 FAT16::validation_fat16() 中过分的合法性检查
+ * 或者直接注释掉 FAT16::FAT16() 中的 this->FAT16::validation_fat16();
+ * @version 1.0
+ * @date 2026-05-08
+ * 
+ * @copyright Copyright (c) 2026
+ * 
+ */
 #include "../include/FAT16.hpp"
 #include "../include/BlockDevice.hpp"
 
