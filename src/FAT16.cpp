@@ -8,7 +8,7 @@ FAT16::FAT16(const std::string &disk_img) : disk_name(disk_img)
     if (!disk_in.is_open())
     {
         std::cerr << "Cannot open disk image \"" << disk_img
-                  << "\"\nAobrt.\n";
+                  << "\"\nAbort.\n";
         exit(EXIT_FAILURE);
     }
     disk_in.read(reinterpret_cast<char *>(&this->DBR_512), 512); //  如果 BPB_BytsPerSec > 512 则存在此域，全部置零，故只需读入起始512字节
@@ -639,7 +639,7 @@ bool FAT16::change_dir(const std::string &path)
         this->pwd.clear();
         std::for_each(tokens.begin(), tokens.end(), [this](std::string &token)
                       { this->pwd += '/'; this->pwd += token; });
-        this->pwd += '/';   // this->pwd 总以 '/' 结尾！
+        this->pwd += '/'; // this->pwd 总以 '/' 结尾！
     }
     return true;
 }
@@ -979,6 +979,7 @@ bool FAT16::remove_entry(FAT16_ENTRY dir_cluster, const std::string &name)
                         // 已经是空子目录文件簇，直接释放掉这一簇
                         this->fat_table[prev_dir_cluster] = this->follow_fat_chain(curr_dir_cluster); // 让前驱指向当前簇后继
                         this->fat_table[curr_dir_cluster] = 0x0000;                                   // 释放当前簇
+                        this->free_cluster_ids.push_back(curr_dir_cluster);                           // 当前簇加入空闲簇栈
                     }
                     return true;
                 }
@@ -1217,6 +1218,7 @@ bool FAT16::resolve_path(const std::string &normalized_path, PATH_RESULT &result
         result.parent_filename = "";                            // 根目录没有父目录所以父目录名称为空
         memset(&result.entry, 0, sizeof(DIR_ENTRY));            // 根目录没有 entry
         result.entry.DIR_FstClusLO = FAT16::ROOT_DIR_CLUSTER;   // 根目录的约定簇号有意义故仍然设置，增加上级调用判断的方式
+        result.entry.DIR_Attr = 0x10;
     }
     else
     {
@@ -1393,7 +1395,7 @@ void FAT16::validation_fat16(const std::string &disk_img)
         if (!disk_in.is_open())
         {
             std::cerr << "Cannot open disk image \"" << disk_img
-                      << "\"\nAobrt.\n";
+                      << "\"\nAbort.\n";
             exit(EXIT_FAILURE);
         }
 
