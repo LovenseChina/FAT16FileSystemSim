@@ -265,7 +265,7 @@ public:
     // 将8.3格式短文件名的目录项元数据转换为 std::string 对象的8.3格式短文件名
     void short_name_to_string(const uint8_t *DIR_Name, std::string &name);
 
-    // 获取分割后的文件名及其拓展名
+    // 将目录项 DIR_Name 字段转为名称（<=8）和拓展名（<=3）
     void get_splited_dir_name(const std::string &normalized_path, std::string &_name, std::string &_ext) const;
 
     /********** FAT16文件系统数据成员 **********/

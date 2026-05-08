@@ -495,8 +495,37 @@ bool FAT16::remove_dir(const std::string &path)
         return false;
     }
 
-    // 尝试移除目录，注意当前目录是空目录才可移除
-    // 实现中
+    // 当前目录判空
+    FAT16_ENTRY dir_cluster = path_result_info.entry.DIR_FstClusLO;
+    while (dir_cluster >= 2 || dir_cluster <= this->max_cluster_id)
+    {
+        if(!this->read_cluster(dir_cluster, reinterpret_cast<char *>(this->sub_dir_file.data())))
+        {
+            std::cerr << "Error: Cannot read directory file!\n";
+            return false;
+        }
+        for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
+        {
+            if (it->DIR_Name[0] != 0x00)
+            {
+                std::cerr << "Error: Only empty direcotry can be removed!\n";
+                return false;
+            }
+        }
+    }
+
+    // 对空目录进行删除
+    // step 1:释放目录文件空间
+    this->free_cluster_chain(path_result_info.entry.DIR_FstClusLO);
+    // step 2:删除该目录项，这里必须要删除不进行回滚，反正是错误数据
+    std::string _name, _ext;
+    this->get_splited_dir_name(normalized_path, _name, _ext);
+    if (!_ext.empty())
+    {
+        std::cerr << "Error: Disk image may corrupted but can still usable!\n";
+    }
+    this->remove_entry(path_result_info.parent_dir_cluster, _name);
+    return true;
 }
 
 std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
