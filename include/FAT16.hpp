@@ -183,10 +183,10 @@ public:
     /********** Layer 3: 路径解析 **********/
 
     // 删除多余 '/' 并强制转大写
-    inline std::string assist_normalize(const std::string &path) const;
+    std::string assist_normalize(const std::string &path) const;
 
     // 检查文件名的正确性
-    inline bool validation_name(const std::string &name) const;
+    bool validation_name(const std::string &name) const;
 
     /**
      * @brief
@@ -245,7 +245,7 @@ public:
      *
      * @return uint32_t 总簇数
      */
-    inline uint32_t get_total_clusters() const;
+    uint32_t get_total_clusters() const;
 
     /**
      * @brief 逻辑块地址转物理地址
@@ -254,7 +254,7 @@ public:
      * @param block_ids 一簇的实际起始扇区（块）的地址
      * @return true 转换成功，false 转换失败
      */
-    inline bool LBA_to_PA(uint32_t cluster_id, uint32_t &block_id) const;
+    bool LBA_to_PA(uint32_t cluster_id, uint32_t &block_id) const;
 
     /**
      * @brief

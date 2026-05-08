@@ -18,8 +18,8 @@ TESTS = \
 	file_rw_test \
 	dir_test \
 	full_link_test \
-	FAT16_path_resolve_test \
-	FAT16_constructor_test
+	path_resolve_test \
+	constructor_test
 
 .PHONY: all clean test
 
@@ -38,10 +38,10 @@ $(OBJ_DIR)/BlockDevice.o: $(SRC_DIR)/BlockDevice.cpp $(INC_DIR)/BlockDevice.hpp 
 %_test: $(SRC_DIR)/%_test.cpp $(FAT16_OBJ)
 	$(CXX) $(CXXFLAGS) -I$(INC_DIR) $< $(FAT16_OBJ) -o $@
 
-FAT16_path_resolve_test: $(SRC_DIR)/FAT16_path_resolve_test.cpp $(FAT16_OBJ)
+path_resolve_test: $(SRC_DIR)/path_resolve_test.cpp $(FAT16_OBJ)
 	$(CXX) $(CXXFLAGS) -I$(INC_DIR) $< $(FAT16_OBJ) -o $@
 
-FAT16_constructor_test: $(SRC_DIR)/FAT16_constructor_test.cpp $(FAT16_OBJ)
+constructor_test: $(SRC_DIR)/constructor_test.cpp $(FAT16_OBJ)
 	$(CXX) $(CXXFLAGS) -I$(INC_DIR) $< $(FAT16_OBJ) -o $@
 
 # Run all tests and report failures
@@ -67,5 +67,8 @@ test_%: %_test
 	./$*_test && echo "PASS" || echo "FAIL"
 
 clean:
-	rm -f $(TESTS) $(OBJ_DIR)/*.o
-	rmdir $(OBJ_DIR) 2>/dev/null || true
+	-rm -f $(TESTS) $(OBJ_DIR)/*.o
+	-rmdir $(OBJ_DIR) 2>/dev/null || true
+	-del /f /q cluster_test.exe entry_test.exe path_test.exe validation_test.exe file_ops_test.exe file_rw_test.exe dir_test.exe full_link_test.exe path_resolve_test.exe constructor_test.exe 2>nul
+	-del /f /q obj\*.o 2>nul
+
