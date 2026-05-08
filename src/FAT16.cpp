@@ -433,7 +433,12 @@ bool FAT16::create_dir(const std::string &path)
     pwd_dir_ent.DIR_FstClusHI = 0x0000;
     pwd_dir_ent.DIR_FstClusLO = pwd_id;
     pwd_dir_ent.DIR_FileSize = 0; // 不关心目录文件大小，反正是整簇大小
-    this->add_entry(path_result_info.parent_dir_cluster, pwd_dir_ent);
+    if (!this->add_entry(path_result_info.parent_dir_cluster, pwd_dir_ent))
+    {
+        std::cerr << "Error: Cannot create directory -- cannot add FCB!\n";
+        this->free_cluster_chain(pwd_id);
+        return false;
+    }
 
     // 建立目录文件
     std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [](DIR_ENTRY &de)
@@ -505,7 +510,7 @@ bool FAT16::remove_dir(const std::string &path)
         }
         for (std::vector<DIR_ENTRY>::iterator it = this->sub_dir_file.begin(); it != this->sub_dir_file.end(); ++it)
         {
-            if (it->DIR_Name[0] != 0x00)
+            if (it->DIR_Name[0] != 0x00 && it->DIR_Name[0] != 0xE5)
             {
                 std::cerr << "Error: Only empty direcotry can be removed!\n";
                 return false;
