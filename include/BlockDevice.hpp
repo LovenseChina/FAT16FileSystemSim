@@ -52,7 +52,7 @@ public:
     virtual bool write_block(uint32_t block_id, const char * buffer) = 0;
 
     /**
-     * @brief 将所有脏数据强制同步到文件中
+     * @brief 将所有 std::fstream 缓冲中数据强制同步到文件中
      */
     virtual void flush_to_file() = 0;
 protected:
@@ -106,7 +106,7 @@ public:
     virtual bool write_block(uint32_t block_id, const char * buffer);
     
     /**
-     * @brief 将所有 脏 数据强制同步到文件中
+     * @brief 将所有 std::fstream 缓冲中数据强制同步到文件中
      */
     virtual void flush_to_file();
 
