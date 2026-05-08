@@ -552,7 +552,7 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
     if (path_result_info.entry.DIR_FstClusLO == FAT16::ROOT_DIR_CLUSTER)
     {
         std::for_each(this->root_entry_table.begin(), this->root_entry_table.end(), [&exist_dir_ents](DIR_ENTRY &de)
-                      { if (de.DIR_Name[0] != 0x00) { exist_dir_ents.push_back(de); } });
+                      { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5) { exist_dir_ents.push_back(de); } });
     }
     else
     {
@@ -565,7 +565,7 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
                 return std::vector<DIR_ENTRY>(0);
             }
             std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [&exist_dir_ents](DIR_ENTRY &de)
-                          { if (de.DIR_Name[0] != 0x00) { exist_dir_ents.push_back(de); } });
+                          { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5) { exist_dir_ents.push_back(de); } });
             dir_cluster = this->follow_fat_chain(dir_cluster);
         }
     }
