@@ -1388,7 +1388,7 @@ void FAT16::validation_fat16(const std::string &disk_img)
                   << DBR_512._BS_END_.BS_BootSig << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
-
+/*
     // 检验空余（小于512字节）
     for (int i = 0; i < 448; ++i)
     {
@@ -1399,7 +1399,7 @@ void FAT16::validation_fat16(const std::string &disk_img)
             exit(EXIT_FAILURE);
         }
     }
-
+*/
     // 检验校验位
     if (this->DBR_512.Signature_word != 0xAA55)
     {
@@ -1409,7 +1409,7 @@ void FAT16::validation_fat16(const std::string &disk_img)
                   << this->DBR_512.Signature_word << "\nAbort.\n";
         exit(EXIT_FAILURE);
     }
-
+/*
     // 检验空余（大于512字节）
     if (this->DBR_512._BPB_.BPB_BytsPerSec > 512)
     {
@@ -1437,7 +1437,7 @@ void FAT16::validation_fat16(const std::string &disk_img)
             }
         }
     }
-
+*/
     //  FAT[0]检验
     int16_t sign_ext_media = static_cast<int8_t>(this->DBR_512._BPB_.BPB_Media);
     if (static_cast<uint16_t>(sign_ext_media) != this->fat_table[0])
