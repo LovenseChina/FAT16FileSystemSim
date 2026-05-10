@@ -573,7 +573,7 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
     if (path_result_info.entry.DIR_FstClusLO == FAT16::ROOT_DIR_CLUSTER)
     {
         std::for_each(this->root_entry_table.begin(), this->root_entry_table.end(), [&exist_dir_ents](DIR_ENTRY &de)
-                      { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5) { exist_dir_ents.push_back(de); } });
+                      { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5 && de.DIR_Attr != 0x08 && de.DIR_Attr != 0x0F) { exist_dir_ents.push_back(de); } }); // 目前只允许显示被支持的普通文件和目录，即不显示卷标文件和LNF的拓展目录项
     }
     else
     {
@@ -586,7 +586,7 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
                 return std::vector<DIR_ENTRY>(0);
             }
             std::for_each(this->sub_dir_file.begin(), this->sub_dir_file.end(), [&exist_dir_ents](DIR_ENTRY &de)
-                          { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5) { exist_dir_ents.push_back(de); } });
+                          { if (de.DIR_Name[0] != 0x00 && de.DIR_Name[0] != 0xE5 && de.DIR_Attr != 0x08 && de.DIR_Attr != 0x0F) { exist_dir_ents.push_back(de); } }); // 目前只允许显示被支持的普通文件和目录，即不显示卷标文件和LNF的拓展目录项
             dir_cluster = this->follow_fat_chain(dir_cluster);
         }
     }
