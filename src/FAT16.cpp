@@ -560,8 +560,8 @@ std::vector<FAT16::DIR_ENTRY> FAT16::list_dir(const std::string &path)
             return std::vector<DIR_ENTRY>(0);
         }
     }
-    // 实际是文件，不能列出目录内容
-    if (path_result_info.entry.DIR_Attr == 0x00)
+    // 实际不是目录，不能列出目录内容
+    if (path_result_info.entry.DIR_Attr != 0x10)
     {
         std::cerr << "Error: \"" << path << "\" is not a directory!\n";
         return std::vector<DIR_ENTRY>(0);
